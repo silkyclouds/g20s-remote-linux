@@ -1,12 +1,6 @@
 [Unit]
-Description=G20 on-screen toast overlay (%i)
-After=graphical-session.target
+Description=G20 on-screen toast overlay (%i), started on demand
 
 [Service]
 ExecStart=%h/.local/bin/g20-toast %i
-Restart=always
-RestartSec=5
 Nice=10
-
-[Install]
-WantedBy=default.target

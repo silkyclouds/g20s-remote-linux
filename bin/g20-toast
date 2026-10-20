@@ -5,7 +5,8 @@ Why not a browser window: a browser window takes the keyboard focus (a playing v
 This uses KDE's layer-shell "overlay" layer (the same mechanism as the desktop's own OSDs): no focus, no pointer input, transparent, above full-screen apps,
 sized to the card only. The pages are 1920x1080 canvases; each overlay is a window onto the right corner of that canvas, so the designed pages stay untouched.
 
-It polls the local g20-switcher-server (/api/notice, /api/audio). A toast is shown while its state has text and removed when the server clears it.
+Started on demand by g20-switcher-server (systemctl --user start g20-toast@notice|audio): it polls the local server (/api/notice, /api/audio), shows the
+toast while the state has text and exits when the server clears it (nothing stays resident: the idle cost is zero).
 Needs: PySide6 with QtWebEngineQuick and Plasma's LayerShellQt QML module (both present on Bazzite KDE).
 """
 import json, os, sys, time, urllib.request
@@ -34,19 +35,22 @@ import org.kde.layershell 1.0 as LayerShell
 Window {
   id: tw
   property string lastKey: ""
+  property bool everShown: false
+  property int idleTicks: 0
   property bool atRight: %(right)s
   property bool atBottom: %(bottom)s
   function show(stamp) { v.url = "%(base)s/%(page)s?live&t=" + stamp; visible = true }
-  function hide() { visible = false; v.url = "about:blank" }
+  function hide() { visible = false; v.url = "about:blank"; if (everShown) Qt.quit() }
   function poll() {
     var x = new XMLHttpRequest()
     x.onreadystatechange = function() {
       if (x.readyState !== 4 || x.status !== 200) return
       var d; try { d = JSON.parse(x.responseText) } catch (e) { return }
       var key = d["%(key)s"] ? JSON.stringify(d) : ""
+      if (!key && !everShown && ++idleTicks > 16) Qt.quit()      // started with nothing to show: leave
       if (key === lastKey) return
       lastKey = key
-      if (key) show(Date.now()); else hide()
+      if (key) { everShown = true; show(Date.now()) } else hide()
     }
     x.open("GET", "%(base)s/api/%(api)s"); x.send()
   }

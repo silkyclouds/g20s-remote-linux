@@ -33,7 +33,7 @@ sed "s|@PYTHONHOME@|$PYHOME|" "$here/systemd/g20-switcher.service" > "$UNITS/g20
 chmod 600 "$HOME/.config/g20/g20.conf"
 loginctl enable-linger "$USER" 2>/dev/null || true
 systemctl --user daemon-reload
-systemctl --user enable --now ydotoold.service g20-switcher.service g20-audio-watch.service g20-toast@notice.service g20-toast@audio.service
+systemctl --user enable --now ydotoold.service g20-switcher.service g20-audio-watch.service
 
 echo; echo "== first-run wizard (sudo password needed to install the key remap)"
 sudo "$here/bin/g20-setup"
