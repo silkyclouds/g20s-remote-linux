@@ -28,6 +28,7 @@ remote does everything from the sofa.
 * **Search key**: opens a **TV on-screen keyboard** (D-pad or air mouse, letters, numbers, symbols, accents, AZERTY/QWERTY/QWERTZ).
 * **Voice search** if the remote is paired over **Bluetooth**: hold the mic key and speak, in the language(s) you choose (e.g. French and English); the text lands in the keyboard's field.
 * Optional buttons: **app switcher** (a TV-style card view of the open windows with live screenshots; hold OK to kill a frozen app), previous / next window.
+* A **"maximum quality" checklist** toast when a film starts (is the sound an untouched bitstream, which codec, lossless or not, channels, rate, screen mode), plus `g20-audio-setup` to make PipeWire pass TrueHD / DTS-HD / Dolby Digital to your soundbar. See [docs/media-center.md](docs/media-center.md).
 * Optional **idle power saving** (`g20-eco`): the PC stays awake and ready but uses the minimum when nothing needs it.
 
 ## Quick start
@@ -108,12 +109,17 @@ It uses [ATVVoice](https://github.com/b0o/ATVVoice) (the remote's mic as a PipeW
 (GPU if you have an NVIDIA card, CPU otherwise). **Languages**: set `G20_VOICE_LANGS=fr,en` (first = default); with several languages the spoken language is
 detected **among those only**, so a family can ask for an English title one moment and a French one the next.
 
+## Media center: bit-perfect sound and the quality checklist
+
+A PC behind a soundbar or AV receiver can send TrueHD, DTS-HD and Dolby Digital untouched, and prove it. `g20-audio-setup` reports and (with `--apply`) enables the passthrough codecs your HDMI output announces;
+`g20-audio-watch` reads the real stream when a film starts and the switcher shows a short checklist. The full, verified method (with what cannot be verified) is in [docs/media-center.md](docs/media-center.md).
+
 ## Requirements
 
 KDE Plasma 6 on **Wayland** (window scripts use KWin), systemd user services, `qdbus`, `curl`, `busctl`, Python 3.11+ with PyGObject (`gi`) and Pillow,
 `ydotool`/`ydotoold` and `wl-clipboard` (keyboard / search), Chrome or Chromium (native or Flatpak) for the switcher and keyboard.
 Tested on **Bazzite** (Fedora Atomic) with Plasma 6.7, a 4K TV, Steam Big Picture, Plezy and VacuumTube. Nothing needs `rpm-ostree` layering:
-everything lives in `~/.local`, `~/.config` and two files in `/etc/udev`.
+PipeWire (`pw-dump`, `pw-cli`, `pactl`) for the audio part. Everything lives in `~/.local`, `~/.config` and two files in `/etc/udev`.
 
 ## Configuration
 

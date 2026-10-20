@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""g20-audio-setup - lets PipeWire send TrueHD / DTS-HD / Dolby Digital (Plus) / DTS to your soundbar or receiver as an untouched bitstream.
+
+By default it only REPORTS what it found and what it would change. Add --apply to do it (nothing needs root; the change is saved by WirePlumber).
+
+What it does, for the HDMI output of your sound card that has a screen or soundbar plugged in:
+  1. enables every codec the device announces in its EDID (iec958.codecs.detected) on the output route, saved across reboots;
+  2. optionally switches the card profile to 7.1 surround (--profile surround71) so multichannel PCM (games, decoded tracks) is not folded to stereo.
+Then, in your player, enable "audio passthrough" (mpv: audio-spdif=ac3,eac3,dts,dts-hd,truehd; Plezy: Settings > Audio > Passthrough).
+Prove it with:  cat /proc/asound/card*/pcm*p/sub0/hw_params  while a film plays (rate 192000 and 8 channels = TrueHD, 48000 = AC-3 / DTS).
+"""
+import argparse, json, subprocess, sys
+
+ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--apply", action="store_true", help="really change the route (default: report only)")
+ap.add_argument("--profile", choices=["keep", "surround51", "surround71"], default="keep", help="also set the card profile (default: keep)")
+a = ap.parse_args()
+
+def run(*c):
+    return subprocess.run(c, capture_output=True, text=True, timeout=20)
+
+try: dump = json.loads(run("pw-dump").stdout)
+except Exception as e: sys.exit("pw-dump failed (is PipeWire running for this user?): %s" % e)
+
+found = []
+for o in dump:
+    if o.get("type") != "PipeWire:Interface:Device": continue
+    params = o.get("info", {}).get("params", {})
+    for r in params.get("Route", []):
+        if r.get("direction") != "Output" or not str(r.get("name", "")).startswith("hdmi-output"): continue
+        info = r.get("info", [])
+        kv = {info[i]: info[i + 1] for i in range(1, len(info) - 1, 2) if isinstance(info[i], str)}
+        try: codecs = json.loads(kv.get("iec958.codecs.detected", "[]"))
+        except ValueError: codecs = []
+        if r.get("available") == "yes" and codecs:
+            prof = next((p.get("name") for p in params.get("Profile", [])), "?")
+            found.append({"dev": o["id"], "card": o["info"]["props"].get("device.name"), "route": r["index"], "device": r.get("device"),
+                          "name": r.get("name"), "product": kv.get("device.product.name", "?"), "codecs": codecs, "profile": prof})
+
+if not found: sys.exit("No HDMI output with a connected screen/soundbar announcing audio codecs was found.")
+for f in found:
+    print("card %(card)s  %(name)s  -> %(product)s  profile=%(profile)s" % f)
+    print("  announced codecs:", ", ".join(f["codecs"]))
+    cmd = ["pw-cli", "set-param", str(f["dev"]), "Route", "{ index: %d, device: %s, props: { iec958Codecs: [ %s ] }, save: true }"
+           % (f["route"], f["device"], ", ".join(f["codecs"]))]
+    print("  would run:", " ".join(cmd[:4]), "'%s'" % cmd[4])
+    if a.profile != "keep": print("  would set the card profile to output:hdmi-%s" % a.profile)
+    if a.apply:
+        r = run(*cmd); print("  route:", "ok" if r.returncode == 0 else "FAILED " + r.stderr.strip())
+        if a.profile != "keep":
+            r = run("pactl", "set-card-profile", f["card"], "output:hdmi-" + a.profile); print("  profile:", "ok" if r.returncode == 0 else "FAILED " + r.stderr.strip())
+if not a.apply: print("\nNothing changed. Rerun with --apply to do it.")

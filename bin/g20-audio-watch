@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""g20-audio-watch - shows a subtle toast with the audio format really delivered to the HDMI sink when a film starts.
+
+How it knows (no guessing): when an HDMI playback PCM of the ALSA card goes from closed to RUNNING, it reads the PipeWire stream
+feeding the sink (pw-dump): `iec958Codec` for a bitstream (TrueHD, EAC3, AC3, DTS, DTS-HD), or raw format / channels / rate for PCM.
+It then POSTs a short description to g20-switcher-server, which shows the toast designed with Claude Design (audio.html).
+Honest limits: a bitstream's channel layout and Dolby Atmos objects are inside the stream, the PC cannot read them (your soundbar's
+display does). Only media apps listed in G20_AUDIO_POPUP_APPS trigger the toast (not system sounds).
+
+Configuration (~/.config/g20/g20.conf):  G20_AUDIO_POPUP=1|0   G20_AUDIO_POPUP_APPS=mpv,plezy,plex,jellyfin,vlc,kodi   G20_AUDIO_POPUP_SECONDS=6
+"""
+import glob, json, os, re, subprocess, sys, time, urllib.request
+
+SERVER = "http://127.0.0.1:48765"
+def conf(k, d=""):
+    p = os.path.expanduser("~/.config/g20/g20.conf")
+    try:
+        for l in open(p):
+            if l.startswith(k + "="): return l.split("=", 1)[1].strip().strip('"')
+    except OSError: pass
+    return d
+def log(*a): print(*a, flush=True)
+
+APPS = [a.strip().lower() for a in conf("G20_AUDIO_POPUP_APPS", "mpv,plezy,plex,jellyfin,vlc,kodi").split(",") if a.strip()]
+HOLD = int(float(conf("G20_AUDIO_POPUP_SECONDS", "6")) * 1000)
+LABELS = {"TrueHD": ("Dolby TrueHD", "lossless"), "EAC3": ("Dolby Digital Plus", "lossy"), "AC3": ("Dolby Digital", "lossy"),
+          "DTS": ("DTS", "lossy"), "DTS-HD": ("DTS-HD", "lossless")}
+LAYOUT = {1: "1.0", 2: "2.0", 3: "2.1", 4: "4.0", 6: "5.1", 8: "7.1"}
+
+def hdmi_running():
+    """Is an HDMI playback PCM of an ALSA card running? (cheap: reads /proc)"""
+    for st in glob.glob("/proc/asound/card*/pcm*p/sub0/status"):
+        try:
+            if open(st).read().startswith("state: RUNNING"): return True
+        except OSError: pass
+    return False
+
+def describe():
+    try: dump = json.loads(subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=8).stdout)
+    except Exception as e: log("pw-dump failed", e); return None
+    best = None
+    for o in dump:
+        if o.get("type") != "PipeWire:Interface:Node": continue
+        props = o.get("info", {}).get("props", {})
+        if props.get("media.class") != "Stream/Output/Audio" or o["info"].get("state") != "running": continue
+        app = (props.get("application.name") or props.get("application.process.binary") or "").lower()
+        if not any(a in app or a in (props.get("media.name") or "").lower() for a in APPS): continue
+        fmts = o["info"].get("params", {}).get("Format") or []
+        if fmts: best = (app, fmts[0], (o["info"].get("params", {}).get("Props") or [None])[0])
+    if not best: return None
+    app, f, props_param = best
+    rate = f.get("rate"); khz = ("%g kHz" % (rate / 1000)) if rate else ""
+    ch = f.get("channels")
+    pr = props_param or {}
+    vol = pr.get("volume"); muted = pr.get("mute")
+    neutral = None if vol is None else (abs(vol - 1.0) < 0.001 and not muted)
+    if f.get("mediaSubtype") == "iec958":
+        label, verdict = LABELS.get(f.get("iec958Codec"), (f.get("iec958Codec") or "Bitstream", None))
+        checks = [
+            {"text": "Untouched bitstream to the soundbar", "ok": True},
+            {"text": "Lossless" if verdict == "lossless" else "Lossy format (the file's own)", "ok": True if verdict == "lossless" else None},
+            {"text": "%s%s" % (("%s channels" % ch) if ch else "Full layout", (" at " + khz) if khz else ""), "ok": True},
+        ]
+        checks += display_check()
+        return {"label": label, "detail": " · ".join(x for x in ("Bitstream to soundbar", khz) if x), "verdict": verdict, "hold": HOLD, "checks": checks}
+    lay = LAYOUT.get(ch, ("%s ch" % ch) if ch else "")
+    checks = [
+        {"text": "Decoded by the PC (the soundbar gets PCM)", "ok": None},
+        {"text": "%s%s" % (lay or "PCM", (" at " + khz) if khz else ""), "ok": True if (ch or 0) >= 6 else None},
+    ]
+    if neutral is not None: checks.append({"text": "Player volume at 100%" if neutral else "Player volume reduced or muted", "ok": neutral})
+    checks += display_check()
+    return {"label": "PCM", "detail": " · ".join(x for x in ("Decoded", lay, khz) if x), "verdict": None, "hold": HOLD, "checks": checks}
+
+_display = {"t": 0, "v": []}
+def display_check():
+    """Current video mode of the screen (read once a minute at most): 4K60 or better is a tick, anything lower is shown as is."""
+    if time.time() - _display["t"] < 60: return _display["v"]
+    _display["t"] = time.time(); _display["v"] = []
+    try:
+        out = json.loads(subprocess.run(["kscreen-doctor", "-j"], capture_output=True, text=True, timeout=6).stdout)
+        for o in out.get("outputs", []):
+            if not (o.get("enabled") and o.get("connected")): continue
+            m = next((m for m in o.get("modes", []) if m.get("id") == o.get("currentModeId")), None)
+            if not m: continue
+            w, h, r = m["size"]["width"], m["size"]["height"], round(m.get("refreshRate", 0))
+            _display["v"] = [{"text": "Screen %dx%d at %d Hz" % (w, h, r), "ok": True if (w >= 3840 and r >= 59) else None}]
+            break
+    except Exception: pass
+    return _display["v"]
+
+def post(body):
+    try:
+        r = urllib.request.Request(SERVER + "/api/audio/show", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(r, timeout=5)
+    except Exception as e: log("server unreachable:", e)
+
+if conf("G20_AUDIO_POPUP", "1") == "0": sys.exit("disabled (G20_AUDIO_POPUP=0)")
+log("g20-audio-watch started; apps:", APPS)
+last_posted, candidate = None, None
+while True:
+    if hdmi_running():
+        info = describe()                                    # a new stream (or a new format) while something already plays also counts
+        key = (info["label"], info["detail"]) if info else None
+        if key and key != last_posted:
+            if key == candidate:                             # same reading twice in a row = stable
+                log("audio:", info); post(info); last_posted, candidate = key, None
+            else: candidate = key
+        elif not key: candidate = None
+        time.sleep(1.0)
+    else:
+        last_posted = candidate = None                       # playback ended: the next film shows its toast again
+        time.sleep(1.5)
