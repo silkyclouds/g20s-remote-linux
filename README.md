@@ -28,7 +28,7 @@ remote does everything from the sofa.
 * **Search key**: opens a **TV on-screen keyboard** (D-pad or air mouse, letters, numbers, symbols, accents, AZERTY/QWERTY/QWERTZ).
 * **Voice search** if the remote is paired over **Bluetooth**: hold the mic key and speak, in the language(s) you choose (e.g. French and English); the text lands in the keyboard's field.
 * Optional buttons: **app switcher** (a TV-style card view of the open windows with live screenshots; hold OK to kill a frozen app), previous / next window.
-* An optional **scene button**: one press starts a Home Assistant scene (e.g. "Movie time") and a notice slides in at the top right of the screen for 5 seconds (green when it worked, amber if Home Assistant did not answer). Map it with `sudo g20-setup --only scene`; see [ha/scene.example.yaml](ha/scene.example.yaml).
+* An optional **scene button**: one press starts a Home Assistant scene (e.g. "Movie time") and a notice slides in at the top right of the screen for 3 seconds (green when it worked, amber if Home Assistant did not answer). Map it with `sudo g20-setup --only scene`; see [ha/scene.example.yaml](ha/scene.example.yaml).
 * A **"maximum quality" checklist** toast when a film starts (is the sound an untouched bitstream, which codec, lossless or not, channels, rate, screen mode), plus `g20-audio-setup` to make PipeWire pass TrueHD / DTS-HD / Dolby Digital to your soundbar. See [docs/media-center.md](docs/media-center.md).
 * Optional **idle power saving** (`g20-eco`): the PC stays awake and ready but uses the minimum when nothing needs it.
 
@@ -69,7 +69,7 @@ You choose which button of **your** remote does each function (the wizard asks);
 | **Source** *(optional)* | `KEY_MACRO5` | **TV input picker** (HDMI 1, 2, 3...): choose with the D-pad, the TV switches through Home Assistant; press again to close |
 | **App switcher** *(optional)* | `KEY_MACRO3` | cards of the open windows, with screenshots; press again to close (or raise it if it is behind); never two |
 | Previous / next window *(optional)* | `KEY_MACRO2` / `KEY_MACRO4` | like Alt+Tab |
-| **Scene** *(optional)* | `KEY_MACRO6` | runs your Home Assistant scene or command, then shows a 5 s notice at the top right (see below) |
+| **Scene** *(optional)* | `KEY_MACRO6` | runs your Home Assistant scene or command, then shows a 3 s notice at the top right (see below) |
 
 `KEY_PROG*` and `KEY_MACRO*` are keys no desktop binds (`F13` would open Quick Settings on KDE), so nothing reacts to them except `g20d`.
 Redo the whole mapping with `sudo bin/g20-setup`, or only some functions with `sudo bin/g20-setup --only source,switcher`

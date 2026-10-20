@@ -11,7 +11,7 @@ Configuration: ~/.config/g20/g20.conf (KEY=VALUE lines)
   G20_HA_POWER_WEBHOOK_URL   optional separate webhook for Power (a long sequence deserves its own "mode: single" automation)
   G20_CMD_POWER / G20_CMD_VOLUP / G20_CMD_VOLDOWN / G20_CMD_MUTE   shell command instead of the webhook (any backend: CEC, IR, ...)
   Scene button (optional key, KEY_MACRO6): G20_SCENE_LABEL ("Movie time"), G20_SCENE_WEBHOOK_URL (a Home Assistant webhook that starts the scene) or
-  G20_CMD_SCENE (shell command), G20_SCENE_ICON (scene | light | info). A notice slides in at the top right of the screen for 5 s with the result.
+  G20_CMD_SCENE (shell command), G20_SCENE_ICON (scene | light | info). A notice slides in at the top right of the screen for 3 s with the result.
   G20_SCENE_NOTICE=ha : Home Assistant sends the success notice itself (a toggling scene knows if it started or ended, see ha/scene.example.yaml);
   g20d then only shows a notice when the scene could not be started.
 """
@@ -71,7 +71,7 @@ def scene():
         if status == "ok" and CONF.get("G20_SCENE_NOTICE") == "ha": return
         try:
             urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:48765/api/notice/show", method="POST", headers={"Content-Type": "application/json"},
-                data=json.dumps({"title": label, "detail": detail, "status": status, "icon": CONF.get("G20_SCENE_ICON", "scene"), "hold": 5000}).encode()), timeout=5)
+                data=json.dumps({"title": label, "detail": detail, "status": status, "icon": CONF.get("G20_SCENE_ICON", "scene"), "hold": 3000}).encode()), timeout=5)
         except Exception as e: log("notice FAILED", e)
     threading.Thread(target=go, daemon=True).start()
 

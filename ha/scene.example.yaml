@@ -1,5 +1,5 @@
 # Scene button: the remote's SCENE key (mapped with `sudo g20-setup --only scene`) starts a Home Assistant scene and the PC shows a
-# 5 s notice at the top right of the screen. Two flavours below; use ONE.
+# 3 s notice at the top right of the screen. Two flavours below; use ONE.
 #
 # ~/.config/g20/g20.conf:
 #   G20_SCENE_LABEL=Movie time
@@ -26,7 +26,7 @@
 #         url: "http://<pc-ip>:48765/api/remote/notice?k=<G20_REMOTE_SECRET>"
 #         method: POST
 #         content_type: "application/json"
-#         payload: '{"title": {{ title | to_json }}, "detail": {{ detail | to_json }}, "status": "ok", "icon": "scene", "hold": 5000}'
+#         payload: '{"title": {{ title | to_json }}, "detail": {{ detail | to_json }}, "status": "ok", "icon": "scene", "hold": 3000}'
 #         timeout: 5
 #
 #     (the PC accepts that request only from the IP in G20_HA_IP, with the secret). The automation, here with an input_select based "mode" like
