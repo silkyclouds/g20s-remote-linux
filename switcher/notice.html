@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notice</title>
+<style>
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;cursor:none}
+*{box-sizing:border-box}
+a{color:#f2f1ee}a:hover{color:#fff}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:transparent;color:#f2f1ee;pointer-events:none;
+  font-family:system-ui,"Noto Sans",Cantarell,"Segoe UI",-apple-system,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;transition:background .4s ease}
+#stage.backdrop{background:radial-gradient(90% 80% at 38% 42%,#3a3630 0%,#1d1c1b 45%,#0a0b0d 100%)}
+#card{position:absolute;right:64px;top:64px;width:460px;height:108px;border-radius:18px;overflow:hidden;
+  background:rgba(22,23,27,.9);box-shadow:0 20px 60px rgba(0,0,0,.55),inset 0 0 0 1px rgba(242,241,238,.06);
+  opacity:0;transform:translateY(-12px);transition:none}
+#card.in{opacity:1;transform:none;transition:opacity .35s ease,transform .35s cubic-bezier(.2,.7,.2,1)}
+#card.out{opacity:0;transform:none;transition:opacity .5s ease}
+.face{position:absolute;inset:0;display:grid;grid-template-columns:52px minmax(0,1fr) auto;align-items:center;gap:18px;padding:0 28px 0 24px;transition:opacity .32s ease}
+.face.fade{opacity:0}
+.glyph{width:52px;height:52px;border-radius:50%;background:rgba(242,241,238,.08);display:flex;align-items:center;justify-content:center;color:#f2f1ee}
+.glyph svg{width:26px;height:26px;display:block}
+.txt{min-width:0}
+.l1{font-size:26px;font-weight:500;line-height:1.2;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.l2{margin-top:5px;font-size:19px;line-height:1.3;color:rgba(242,241,238,.62);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dot{width:10px;height:10px;border-radius:50%;margin-left:2px}
+.dot.ok{background:oklch(0.8 0.15 150);box-shadow:0 0 0 5px oklch(0.8 0.15 150 / .14)}
+.dot.error{background:oklch(0.82 0.13 75);box-shadow:0 0 0 5px oklch(0.82 0.13 75 / .14)}
+#bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(242,241,238,.07)}
+#bar b{position:absolute;inset:0;background:rgba(242,241,238,.42);transform-origin:0 50%}
+@media (prefers-reduced-motion: reduce){
+  #card{transform:none}
+  #card.in{transition:opacity .35s ease}
+}
+#demo{position:absolute;top:220px;right:64px;width:440px;padding:22px;border-radius:18px;background:#1b1d21;box-shadow:0 20px 60px rgba(0,0,0,.6);display:none;cursor:default;pointer-events:auto}
+#demo.on{display:block}
+#demo h3{margin:0 0 12px;font-size:18px;font-weight:600;color:rgba(242,241,238,.6);letter-spacing:.06em;text-transform:uppercase}
+#demo h3.sub{margin-top:18px}
+.opt{display:flex;gap:14px;width:100%;padding:10px 14px;border-radius:10px;font-size:21px;cursor:pointer;user-select:none}
+.opt:hover,.opt.cur{background:rgba(242,241,238,.1)}
+.opt b{width:26px;flex:none;color:rgba(242,241,238,.5);font-weight:600}
+.opt span{flex:1;min-width:0}
+.opt em{font-style:normal;color:rgba(242,241,238,.5)}
+.opt.onv em{color:#f2f1ee}
+#demo p{margin:12px 0 0;font-size:16px;color:rgba(242,241,238,.5);line-height:1.4}
+#dhint{position:absolute;left:28px;top:24px;font-size:16px;color:rgba(242,241,238,.3);display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="card" aria-live="polite"><div id="bar"><b></b></div></div>
+  <div id="dhint">D · demo</div>
+  <div id="demo">
+    <h3>Demo states</h3><div id="dlist"></div>
+    <h3 class="sub">Options</h3><div id="olist"></div>
+    <p>Keys 1 to 6, R to replay, D hides this panel. Also via <code>?state=…</code></p>
+  </div>
+</div>
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const stage = $('stage'), card = $('card'), bar = $('bar').firstChild;
+const GLYPH = {
+  scene: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><rect x="3.5" y="10" width="17" height="10" rx="2"/><path d="M3.8 9.6 19.4 5.4l-.7-2.6L3.1 7z"/><path d="M8 4.8l2.2 3M12.6 3.6l2.2 3"/></svg>',
+  info:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.6" r=".6" fill="currentColor"/></svg>',
+  light: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 14.6A6 6 0 1 1 15.4 14.6c-.6.5-.9 1.1-.9 1.8V17h-5v-.6c0-.7-.3-1.3-.9-1.8z"/><path d="M9.8 20h4.4"/></svg>'
+};
+const MOCK = {
+  ok:    {title:'Movie time', detail:'Scene started', status:'ok', icon:'scene', hold:5000},
+  error: {title:'Movie time', detail:'Home Assistant did not answer', status:'error', icon:'scene', hold:5000},
+  long:  {title:'Living room, kitchen and hallway evening ambiance for guests', detail:'Automation updated by Home Assistant at 21:42, next run tomorrow at sunset', status:null, icon:'info', hold:5000},
+  light: {title:'Ceiling light', detail:'Dimmed to 20%', status:'ok', icon:'light', hold:5000},
+  pair: null, motion: null
+};
+const STATES = [['ok','Movie time · ok'],['error','Home Assistant did not answer'],['long','Info · long title and detail'],['light','Light icon'],['pair','Two notices in a row'],['motion','Enter / leave motion']];
+
+const S = {vis:false, hideT:0, face:null, mock:false, pin:true, state:null, loopT:[]};
+
+function fit(){
+  if (!innerWidth || !innerHeight){ clearTimeout(fit.t); fit.t = setTimeout(fit, 100); return; }
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  stage.style.transform = `translate(${(innerWidth-1920*s)/2}px,${(innerHeight-1080*s)/2}px) scale(${s})`;
+}
+['resize','load','pageshow'].forEach(ev=>addEventListener(ev, fit)); document.addEventListener('visibilitychange', fit); fit();
+if (window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
+
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+function str(v){ return v==null ? '' : String(v).trim(); }
+
+function buildFace(d){
+  const f = el('div','face'), g = el('div','glyph'), t = el('div','txt');
+  g.innerHTML = GLYPH[str(d.icon)] || GLYPH.info;
+  t.append(el('div','l1',str(d.title)));
+  if (str(d.detail)) t.append(el('div','l2',str(d.detail)));
+  f.append(g, t);
+  const st = str(d.status);
+  if (st==='ok' || st==='error') f.append(el('i','dot '+st));
+  return f;
+}
+function setFace(d, cross){
+  const nf = buildFace(d), old = S.face;
+  if (cross && old){
+    nf.classList.add('fade'); card.insertBefore(nf, $('bar'));
+    nf.offsetWidth; nf.classList.remove('fade'); old.classList.add('fade');
+    setTimeout(()=>old.remove(), 340);
+  } else {
+    card.querySelectorAll('.face').forEach(x=>x.remove());
+    card.insertBefore(nf, $('bar'));
+  }
+  S.face = nf;
+}
+function arm(ms, pin){
+  clearTimeout(S.hideT);
+  bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)'; bar.offsetWidth;
+  if (pin){ bar.style.transform = 'scaleX(.45)'; return; }
+  bar.style.transition = `transform ${ms}ms linear`; bar.style.transform = 'scaleX(0)';
+  S.hideT = setTimeout(hide, ms);
+}
+function show(d, pin){
+  const ms = Math.max(1000, Number(d.hold) || 5000);
+  if (!S.vis){
+    setFace(d, false);
+    card.className = ''; card.offsetWidth; card.className = 'in';
+    S.vis = true;
+  } else setFace(d, true);
+  arm(ms, pin);
+}
+function hide(){
+  clearTimeout(S.hideT);
+  if (!S.vis) return;
+  card.className = 'out'; S.vis = false;
+}
+
+/* live mode */
+let lastKey = null;
+async function poll(){
+  try {
+    const r = await fetch('/api/notice', {cache:'no-store'});
+    if (r.ok && r.status !== 204){
+      const d = await r.json();
+      if (d && str(d.title)){
+        const k = d.id != null ? 'id:'+d.id : JSON.stringify([d.title, d.detail, d.status, d.icon]);
+        if (lastKey === null) lastKey = '';
+        if (k !== lastKey){ lastKey = k; show(d, false); }
+      }
+    }
+  } catch(e){}
+  if (!S.mock) setTimeout(poll, 1000);
+}
+
+/* demo mode */
+function clearLoop(){ S.loopT.forEach(clearTimeout); S.loopT = []; }
+function loop(steps, period){
+  clearLoop(); hide();
+  const run = () => { steps.forEach(([t,d])=>S.loopT.push(setTimeout(()=>show(d,false), t))); S.loopT.push(setTimeout(run, period)); };
+  run();
+}
+function loadState(name){
+  if (/^\d+$/.test(name||'')) name = (STATES[+name-1]||[])[0];
+  if (!(name in MOCK)) name = 'ok';
+  S.state = name; clearLoop();
+  document.querySelectorAll('#dlist .opt').forEach(b=>b.classList.toggle('cur', b.dataset.s===name));
+  if (name === 'pair') return loop([[600,{...MOCK.ok, hold:5000}],[2400,{title:'Lights dimmed', detail:'Living room at 15%', status:'ok', icon:'light', hold:5000}]], 9000);
+  if (name === 'motion') return loop([[700,{...MOCK.ok, hold:2800}]], 4800);
+  show(MOCK[name], S.pin);
+}
+function replay(){ if (S.state==='pair' || S.state==='motion') return loadState(S.state); hide(); setTimeout(()=>loadState(S.state), 560); }
+function renderOpts(){
+  const l = $('olist'); l.innerHTML = '';
+  [['Keep on screen', S.pin, ()=>{ S.pin=!S.pin; loadState(S.state); }],
+   ['Preview backdrop', stage.classList.contains('backdrop'), ()=>stage.classList.toggle('backdrop')],
+   ['Replay', null, replay]
+  ].forEach(([label, v, fn], i)=>{
+    const b = el('div','opt'+(v?' onv':'')); b.append(el('b',null,i===2?'R':''), el('span',null,label));
+    if (v!==null) b.append(el('em',null,v?'On':'Off'));
+    b.onclick = ()=>{ fn(); renderOpts(); };
+    l.append(b);
+  });
+}
+function enableDemo(){
+  S.mock = true; $('dhint').style.display = 'block';
+  const l = $('dlist');
+  STATES.forEach(([k,label],i)=>{ const b=el('div','opt'); b.dataset.s=k; b.append(el('b',null,i+1), el('span',null,label)); b.onclick=()=>loadState(k); l.append(b); });
+  renderOpts();
+  addEventListener('keydown', e=>{
+    if (e.key==='d' || e.key==='D'){ $('demo').classList.toggle('on'); return; }
+    if (e.key==='r' || e.key==='R'){ replay(); return; }
+    if (/^[1-6]$/.test(e.key)) loadState(STATES[+e.key-1][0]);
+  });
+}
+
+const q = new URLSearchParams(location.search), st = q.get('state');
+if (st || q.has('demo') || location.protocol === 'file:'){
+  enableDemo();
+  if (q.has('demo') || !st){ $('demo').classList.add('on'); stage.classList.add('backdrop'); renderOpts(); }
+  loadState(st || 'ok');
+} else poll();
+})();
+</script>
+</body>
+</html>

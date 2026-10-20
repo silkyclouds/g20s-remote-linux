@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio quality</title>
+<style>
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;cursor:none}
+*{box-sizing:border-box}
+a{color:#f2f1ee}a:hover{color:#fff}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:transparent;color:#f2f1ee;pointer-events:none;
+  font-family:system-ui,"Noto Sans",Cantarell,"Segoe UI",-apple-system,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;transition:background .4s ease}
+#stage.backdrop{background:radial-gradient(90% 80% at 62% 38%,#3a3630 0%,#1d1c1b 45%,#0a0b0d 100%)}
+#card{position:absolute;left:64px;bottom:64px;width:560px;height:0;border-radius:18px;overflow:hidden;
+  background:rgba(22,23,27,.9);box-shadow:0 20px 60px rgba(0,0,0,.55),inset 0 0 0 1px rgba(242,241,238,.06);
+  opacity:0;transform:translateY(12px);transition:none}
+#card.in{opacity:1;transform:none;transition:opacity .35s ease,transform .35s cubic-bezier(.2,.7,.2,1),height .36s cubic-bezier(.2,.7,.2,1)}
+#card.out{opacity:0;transform:none;transition:opacity .5s ease}
+.face{position:absolute;left:0;right:0;top:0;padding:24px 28px 26px;transition:opacity .32s ease}
+.face.fade{opacity:0}
+.hd{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:16px}
+.glyph{width:44px;height:44px;border-radius:11px;background:rgba(242,241,238,.08);display:flex;align-items:center;justify-content:center;color:#f2f1ee}
+.glyph svg{width:24px;height:24px;display:block}
+.l1{font-size:28px;font-weight:500;line-height:1.2;letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.chip{display:flex;align-items:center;gap:9px;height:34px;padding:0 14px 0 12px;border-radius:999px;background:rgba(242,241,238,.1);font-size:16px;font-weight:600;letter-spacing:.02em;color:rgba(242,241,238,.88);white-space:nowrap}
+.chip i{width:9px;height:9px;border-radius:50%;background:rgba(242,241,238,.42)}
+.chip.lossless i{background:oklch(0.8 0.15 150)}
+.chip.downmix i{background:oklch(0.82 0.13 75)}
+.rows{margin:18px 0 0 60px;display:flex;flex-direction:column;gap:9px}
+.row{display:flex;align-items:center;gap:14px;min-width:0;font-size:20px;line-height:1.3;color:rgba(242,241,238,.85);animation:rowIn .42s cubic-bezier(.2,.7,.2,1) both}
+.row span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row.info span{color:rgba(242,241,238,.68)}
+.ic{width:22px;height:22px;flex:none;display:block}
+.ic.tick path{stroke:oklch(0.8 0.15 150);stroke-dasharray:1;stroke-dashoffset:1;animation:draw .45s cubic-bezier(.4,0,.2,1) forwards}
+.ic.dot circle{stroke:rgba(242,241,238,.45)}
+.ic.warn{color:oklch(0.82 0.13 75)}
+.ft{margin:16px 0 0 60px;font-size:18px;line-height:1.3;color:rgba(242,241,238,.5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;animation:fadeIn .4s ease both}
+#bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(242,241,238,.07)}
+#bar b{position:absolute;inset:0;background:rgba(242,241,238,.42);transform-origin:0 50%}
+#card.nobar #bar{display:none}
+@keyframes rowIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes draw{to{stroke-dashoffset:0}}
+@media (prefers-reduced-motion: reduce){
+  #card{transform:none}
+  #card.in{transition:opacity .35s ease}
+  .row{animation-name:fadeIn}
+  .ic.tick path{animation:none;stroke-dashoffset:0}
+}
+#demo{position:absolute;top:80px;right:120px;width:440px;padding:22px;border-radius:18px;background:#1b1d21;box-shadow:0 20px 60px rgba(0,0,0,.6);display:none;cursor:default;pointer-events:auto}
+#demo.on{display:block}
+#demo h3{margin:0 0 12px;font-size:18px;font-weight:600;color:rgba(242,241,238,.6);letter-spacing:.06em;text-transform:uppercase}
+#demo h3.sub{margin-top:18px}
+.opt{display:flex;gap:14px;width:100%;padding:9px 14px;border-radius:10px;font-size:21px;cursor:pointer;user-select:none}
+.opt:hover,.opt.cur{background:rgba(242,241,238,.1)}
+.opt b{width:26px;flex:none;color:rgba(242,241,238,.5);font-weight:600}
+.opt span{flex:1;min-width:0}
+.opt em{font-style:normal;color:rgba(242,241,238,.5)}
+.opt.onv em{color:#f2f1ee}
+#demo p{margin:12px 0 0;font-size:16px;color:rgba(242,241,238,.5);line-height:1.4}
+#dhint{position:absolute;right:28px;top:24px;font-size:16px;color:rgba(242,241,238,.3);display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="card" aria-live="polite"><div id="bar"><b></b></div></div>
+  <div id="dhint">D · demo</div>
+  <div id="demo">
+    <h3>Demo states</h3><div id="dlist"></div>
+    <h3 class="sub">Options</h3><div id="olist"></div>
+    <p>Keys 1 to 9, R to replay, D hides this panel. Also via <code>?state=…</code></p>
+  </div>
+</div>
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const stage = $('stage'), card = $('card'), bar = $('bar').firstChild;
+const WAVE = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="10" width="2.2" height="4" rx="1.1"/><rect x="7" y="6.5" width="2.2" height="11" rx="1.1"/><rect x="11" y="3.5" width="2.2" height="17" rx="1.1"/><rect x="15" y="7.5" width="2.2" height="9" rx="1.1"/><rect x="19" y="10" width="2.2" height="4" rx="1.1"/></svg>';
+const ICON = {
+  tick: '<svg class="ic tick" viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path pathLength="1" d="M5 12.5l4.3 4.3L19 7.2"/></svg>',
+  dot:  '<svg class="ic dot" viewBox="0 0 24 24" fill="none" stroke-width="1.8"><circle cx="12" cy="12" r="4.6"/></svg>',
+  warn: '<svg class="ic warn" viewBox="0 0 24 24" fill="currentColor"><rect x="10.8" y="4.5" width="2.4" height="10" rx="1.2"/><circle cx="12" cy="18.6" r="1.5"/></svg>'
+};
+const VERDICT = {lossless:'Lossless', lossy:'Lossy', downmix:'Downmix'};
+const ROW0 = 260, STEP = 120;
+
+const scr = t => ({text:t, ok:true});
+const MOCK = {
+  truehd: {label:'Dolby TrueHD', detail:'Bitstream to soundbar · 7.1 · 192 kHz', verdict:'lossless', hold:7000, checks:[
+    {text:'Untouched bitstream to the soundbar', ok:true},{text:'Lossless', ok:true},{text:'8 channels at 192 kHz', ok:true},scr('Screen 3840x2160 at 60 Hz')]},
+  ddp: {label:'Dolby Digital Plus', detail:'Bitstream · 5.1 · 48 kHz', verdict:'lossy', hold:7000, checks:[
+    {text:'Untouched bitstream to the soundbar', ok:true},{text:'Lossy format, the file\u2019s own', ok:null},{text:'6 channels at 48 kHz', ok:true},scr('Screen 3840x2160 at 60 Hz')]},
+  dtshd: {label:'DTS-HD Master Audio', detail:'Bitstream to soundbar · 7.1 · 192 kHz', verdict:'lossless', hold:7000, checks:[
+    {text:'Untouched bitstream to the soundbar', ok:true},{text:'Lossless', ok:true},{text:'8 channels at 192 kHz', ok:true},scr('Screen 3840x2160 at 24 Hz')]},
+  dd: {label:'Dolby Digital', detail:'Bitstream · 5.1 · 48 kHz', verdict:'lossy', hold:7000, checks:[
+    {text:'Untouched bitstream to the soundbar', ok:true},{text:'Lossy format, the file\u2019s own', ok:null},{text:'6 channels at 48 kHz', ok:true},scr('Screen 1920x1080 at 60 Hz')]},
+  pcm: {label:'PCM', detail:'PCM · 7.1 · 24-bit · 48 kHz', verdict:'lossless', hold:7000, checks:[
+    {text:'Decoded by the PC, the soundbar gets PCM', ok:null},{text:'7.1 at 48 kHz', ok:true},{text:'Player volume at 100%', ok:true},scr('Screen 3840x2160 at 60 Hz')]},
+  pcmvol: {label:'PCM', detail:'PCM · 7.1 · 24-bit · 48 kHz', verdict:'lossless', hold:7000, checks:[
+    {text:'Decoded by the PC, the soundbar gets PCM', ok:null},{text:'7.1 at 48 kHz', ok:true},{text:'Player volume at 64%, set it to 100%', ok:false},scr('Screen 3840x2160 at 60 Hz')]},
+  stereo: {label:'PCM', detail:'PCM · 2.0 · 48 kHz', verdict:null, hold:7000, checks:[
+    {text:'Stereo source, played as recorded', ok:null},{text:'2.0 at 48 kHz', ok:true},{text:'Player volume at 100%', ok:true}]},
+  long: {label:'Unknown codec (A_MS/ACM 0x2000, extended profile, rev. 7)', detail:'Bitstream · layout unknown · sample rate unknown · passthrough attempted', verdict:null, hold:7000, checks:[
+    {text:'Format not recognized, passed through as is', ok:null},{text:'Bitstream to the soundbar', ok:true},{text:'Channel layout reported by the file only, not confirmed by the soundbar', ok:null},
+    {text:'Sample rate unknown', ok:false},scr('Screen 1920x1080 at 50 Hz')]},
+  motion: null
+};
+const STATES = [['truehd','TrueHD · Lossless'],['ddp','Dolby Digital Plus · Lossy'],['dtshd','DTS-HD MA · Lossless'],['dd','Dolby Digital · Lossy'],['pcm','PCM decoded by the PC'],['pcmvol','PCM · volume reduced'],['stereo','Stereo 2.0'],['long','Long / unknown codec'],['motion','Enter / leave motion']];
+
+const S = {vis:false, hideT:0, face:null, mock:false, pin:true, barOn:true, state:null, loopT:[]};
+
+function fit(){
+  if (!innerWidth || !innerHeight){ clearTimeout(fit.t); fit.t = setTimeout(fit, 100); return; }
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  stage.style.transform = `translate(${(innerWidth-1920*s)/2}px,${(innerHeight-1080*s)/2}px) scale(${s})`;
+  if (typeof sizeCard === 'function') sizeCard();
+}
+['resize','load','pageshow'].forEach(ev=>addEventListener(ev, fit)); document.addEventListener('visibilitychange', fit); fit();
+if (window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
+
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+function str(v){ return v==null ? '' : String(v).trim(); }
+
+function buildFace(d){
+  const f = el('div','face'), hd = el('div','hd'), g = el('div','glyph');
+  g.innerHTML = WAVE;
+  hd.append(g, el('div','l1', str(d.label) || 'Unknown format'));
+  const v = str(d.verdict).toLowerCase();
+  if (VERDICT[v]){ const c = el('div','chip '+v); c.append(el('i'), document.createTextNode(VERDICT[v])); hd.append(c); }
+  f.append(hd);
+  const checks = (Array.isArray(d.checks) ? d.checks : []).filter(c=>c && str(c.text)).slice(0,5);
+  if (checks.length){
+    const rows = el('div','rows');
+    checks.forEach((c,i)=>{
+      const kind = c.ok===true ? 'tick' : c.ok===false ? 'warn' : 'dot';
+      const r = el('div','row'+(kind==='dot'?' info':'')), delay = ROW0 + i*STEP;
+      r.style.animationDelay = delay+'ms';
+      r.innerHTML = ICON[kind];
+      if (kind==='tick') r.querySelector('path').style.animationDelay = (delay+140)+'ms';
+      r.append(el('span',null,str(c.text)));
+      rows.append(r);
+    });
+    f.append(rows);
+  }
+  const detail = str(d.detail);
+  if (detail){ const ft = el('div','ft',detail); ft.style.animationDelay = (ROW0 + checks.length*STEP + 80)+'ms'; f.append(ft); }
+  return f;
+}
+
+function setFace(d, cross){
+  const nf = buildFace(d), old = S.face;
+  if (cross && old){
+    nf.classList.add('fade'); card.insertBefore(nf, $('bar'));
+    nf.offsetWidth; nf.classList.remove('fade'); old.classList.add('fade');
+    setTimeout(()=>old.remove(), 340);
+  } else {
+    card.querySelectorAll('.face').forEach(x=>x.remove());
+    card.insertBefore(nf, $('bar'));
+  }
+  S.face = nf; sizeCard();
+  if (faceRO){ faceRO.disconnect(); faceRO.observe(nf); }
+}
+const faceRO = window.ResizeObserver ? new ResizeObserver(()=>sizeCard()) : null;
+function sizeCard(){ if (S.face && S.face.offsetHeight) card.style.height = S.face.offsetHeight + 'px'; }
+
+function arm(ms, pin){
+  clearTimeout(S.hideT);
+  bar.style.transition = 'none'; bar.style.transform = 'scaleX(1)'; bar.offsetWidth;
+  if (pin){ bar.style.transform = 'scaleX(.45)'; return; }
+  bar.style.transition = `transform ${ms}ms linear`; bar.style.transform = 'scaleX(0)';
+  S.hideT = setTimeout(hide, ms);
+}
+function show(d, pin){
+  const ms = Math.max(1500, Number(d.hold) || 6000);
+  if (!S.vis){
+    card.className = ''; setFace(d, false);
+    card.offsetWidth; card.className = 'in';
+    S.vis = true;
+  } else setFace(d, true);
+  card.classList.toggle('nobar', !S.barOn);
+  arm(ms, pin);
+}
+function hide(){
+  clearTimeout(S.hideT);
+  if (!S.vis) return;
+  card.className = 'out'; card.classList.toggle('nobar', !S.barOn); S.vis = false;
+}
+
+/* live mode */
+let lastKey = null;
+async function poll(){
+  try {
+    const r = await fetch('/api/audio', {cache:'no-store'});
+    if (r.ok && r.status !== 204){
+      const d = await r.json();
+      if (d && str(d.label)){
+        const k = JSON.stringify([d.id, d.label, d.detail, d.verdict, d.checks]);
+        if (k !== lastKey){ lastKey = k; show(d, false); }
+      } else lastKey = null;
+    }
+  } catch(e){}
+  if (!S.mock) setTimeout(poll, 1500);
+}
+
+/* demo mode */
+function clearLoop(){ S.loopT.forEach(clearTimeout); S.loopT = []; }
+function motionLoop(){
+  clearLoop(); hide();
+  const run = () => {
+    S.loopT.push(setTimeout(()=>show({...MOCK.ddp, hold:4200}, false), 700));
+    S.loopT.push(setTimeout(()=>show({...MOCK.truehd, hold:3400}, false), 2900));
+    S.loopT.push(setTimeout(run, 7800));
+  };
+  run();
+}
+function loadState(name){
+  if (/^\d+$/.test(name||'')) name = (STATES[+name-1]||[])[0];
+  if (!(name in MOCK)) name = 'truehd';
+  S.state = name; clearLoop();
+  document.querySelectorAll('#dlist .opt').forEach(b=>b.classList.toggle('cur', b.dataset.s===name));
+  if (name === 'motion') return motionLoop();
+  show(MOCK[name], S.pin);
+}
+function replay(){ if (S.state==='motion') return motionLoop(); hide(); setTimeout(()=>loadState(S.state), 560); }
+function renderOpts(){
+  const l = $('olist'); l.innerHTML = '';
+  [['Keep on screen', S.pin, ()=>{ S.pin=!S.pin; loadState(S.state); }],
+   ['Countdown bar', S.barOn, ()=>{ S.barOn=!S.barOn; card.classList.toggle('nobar', !S.barOn); }],
+   ['Preview backdrop', stage.classList.contains('backdrop'), ()=>stage.classList.toggle('backdrop')],
+   ['Replay', null, replay]
+  ].forEach(([label, v, fn], i)=>{
+    const b = el('div','opt'+(v?' onv':'')); b.append(el('b',null,i===3?'R':''), el('span',null,label));
+    if (v!==null) b.append(el('em',null,v?'On':'Off'));
+    b.onclick = ()=>{ fn(); renderOpts(); };
+    l.append(b);
+  });
+}
+function enableDemo(){
+  S.mock = true; $('dhint').style.display = 'block';
+  const l = $('dlist');
+  STATES.forEach(([k,label],i)=>{ const b=el('div','opt'); b.dataset.s=k; b.append(el('b',null,i+1), el('span',null,label)); b.onclick=()=>loadState(k); l.append(b); });
+  renderOpts();
+  addEventListener('keydown', e=>{
+    if (e.key==='d' || e.key==='D'){ $('demo').classList.toggle('on'); return; }
+    if (e.key==='r' || e.key==='R'){ replay(); return; }
+    if (/^[1-9]$/.test(e.key)) loadState(STATES[+e.key-1][0]);
+  });
+}
+
+const q = new URLSearchParams(location.search), st = q.get('state');
+if (st || q.has('demo') || location.protocol === 'file:'){
+  enableDemo();
+  if (q.has('demo') || !st){ $('demo').classList.add('on'); stage.classList.add('backdrop'); renderOpts(); }
+  loadState(st || 'truehd');
+} else poll();
+})();
+</script>
+</body>
+</html>

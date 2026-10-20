@@ -339,16 +339,14 @@ def select_source(sid, close=True):
 # ---------- toasts: small borderless windows that never take focus (audio-format checklist bottom-left, scene notices top-right) ----------
 audio = {"label": "", "detail": "", "verdict": None, "hold": 6000, "checks": []}
 notice = {"title": "", "detail": "", "status": None, "icon": "info", "hold": 5000, "id": 0}
-TOASTS = {"audio": {"page": "audio.html", "w": 700, "h": 200, "corner": "bl", "state": audio},
-          "notice": {"page": "notice.html", "w": 520, "h": 160, "corner": "tr", "state": notice}}
-MARGIN = 40
+TOASTS = {"audio": {"page": "audio.html", "state": audio}, "notice": {"page": "notice.html", "state": notice}}
 def _toast_place_js(t):
-    x = "a.x + %d" % MARGIN if t["corner"] in ("bl", "tl") else "a.x + a.width - %d - %d" % (t["w"], MARGIN)
-    y = "a.y + %d" % MARGIN if t["corner"] in ("tl", "tr") else "a.y + a.height - %d - %d" % (t["h"], MARGIN)
+    """The pages are 1920x1080 canvases scaled to the window (card position and margins are drawn inside the page), so the toast window covers the
+    whole output: transparent, above everything, no border, out of the switcher/taskbar. The page itself ignores the pointer."""
     return """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) {
   const a = workspace.clientArea(KWin.FullScreenArea, w);
   w.fullScreen = false; w.keepAbove = true; w.skipTaskbar = true; w.skipPager = true; w.skipSwitcher = true; w.noBorder = true;
-  w.frameGeometry = {x: %s, y: %s, width: %d, height: %d}; } }""" % (t["page"], x, y, t["w"], t["h"])
+  w.frameGeometry = {x: a.x, y: a.y, width: a.width, height: a.height}; } }""" % t["page"]
 def _toast_close_js(t):
     return "for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) w.closeWindow(); }" % t["page"]
 _toast_timer = {}
@@ -365,14 +363,16 @@ def show_toast(kind, info):
     if not toast_window(t):
         data = kwin(LIST_JS, wait=True) or []
         prev = next((w for w in reversed(data) if w["active"] and not any(x["page"] in w["cls"] for x in TOASTS.values())), None)
-        subprocess.Popen(browser_command("/" + t["page"], kiosk=False, extra=["--window-size=%d,%d" % (t["w"], t["h"])]),
+        subprocess.Popen(browser_command("/" + t["page"], kiosk=False, extra=["--window-size=1280,720"]),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         for _ in range(40):
             time.sleep(0.2)
             if toast_window(t): break
         kwin(_toast_place_js(t))
         if prev: kwin(focus_js(prev["id"], close_switcher=False))       # a toast must never take the remote's keys
-    tm = threading.Timer(st["hold"] / 1000.0 + 1.2, lambda: kwin(_toast_close_js(t))); tm.daemon = True; tm.start(); _toast_timer[kind] = tm
+    def done():
+        kwin(_toast_close_js(t)); st["title" if kind == "notice" else "label"] = ""
+    tm = threading.Timer(st["hold"] / 1000.0 + 1.2, done); tm.daemon = True; tm.start(); _toast_timer[kind] = tm
 
 def show_audio(info): show_toast("audio", info)
 def show_notice(info): show_toast("notice", info)
