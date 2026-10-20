@@ -5,6 +5,27 @@ here=$(cd "$(dirname "$0")" && pwd)
 BIN=$HOME/.local/bin; UNITS=$HOME/.config/systemd/user; SW=$HOME/.local/share/g20-switcher; LIBX=$HOME/.local/libexec/g20
 mkdir -p "$BIN" "$UNITS" "$SW" "$LIBX" "$HOME/.config/g20" "$HOME/.local/share/applications"
 
+
+echo "== checking what this computer has"
+missing_hard=""; missing_soft=""
+need() { command -v "$1" >/dev/null 2>&1 || missing_hard="$missing_hard $1"; }
+want() { command -v "$1" >/dev/null 2>&1 || missing_soft="$missing_soft $1"; }
+need python3; need systemctl; need curl; need busctl
+command -v qdbus >/dev/null 2>&1 || command -v qdbus6 >/dev/null 2>&1 || missing_hard="$missing_hard qdbus"
+want ydotool; want wl-copy; want pw-dump; want kscreen-doctor
+python3 -c "import gi" 2>/dev/null || missing_soft="$missing_soft python3-gobject(gi)"
+python3 -c "import PySide6.QtWebEngineQuick" 2>/dev/null || missing_soft="$missing_soft PySide6+QtWebEngine(on-screen-notices)"
+command -v google-chrome-stable >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1 || flatpak list 2>/dev/null | grep -qiE "chrom" || missing_soft="$missing_soft chrome-or-chromium(switcher-and-keyboard-pages)"
+if [ -n "$missing_hard" ]; then
+  echo "MISSING (required):$missing_hard"
+  echo "  Fedora / Bazzite: these come with the base system (qdbus is in qt6-qttools). Debian / Ubuntu: sudo apt install python3 curl systemd qt6-tools-dev-tools"
+  echo "  Install them, then run ./install.sh again."; exit 1
+fi
+[ -n "$missing_soft" ] && { echo "Missing (optional, the matching feature is skipped or limited):$missing_soft"
+  echo "  Bazzite / Fedora Atomic: flatpak install flathub com.google.Chrome ; ydotool and wl-clipboard are usually present (else: brew install ydotool wl-clipboard)"
+  echo "  Debian / Ubuntu: sudo apt install ydotool wl-clipboard python3-gi python3-pyside6.qtwebengine pipewire-bin kscreen"; echo; }
+if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then echo "Note: this session is not Wayland (${XDG_SESSION_TYPE:-unknown}). The window scripts and the notices need KDE Plasma on Wayland."; fi
+
 echo "== scripts and services"
 for f in g20d g20-home g20-window g20-micro g20-micro-kwin g20-switcher g20-source g20-capture g20-setup g20-audio-watch g20-audio-setup g20-toast; do install -m 755 "$here/bin/$f" "$BIN/$f"; done
 install -m 755 "$here/switcher/g20-switcher-server" "$BIN/g20-switcher-server"

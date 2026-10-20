@@ -32,6 +32,19 @@ remote does everything from the sofa.
 * A **"maximum quality" checklist** toast when a film starts (is the sound an untouched bitstream, which codec, lossless or not, channels, rate, screen mode), plus `g20-audio-setup` to make PipeWire pass TrueHD / DTS-HD / Dolby Digital to your soundbar. See [docs/media-center.md](docs/media-center.md).
 * Optional **idle power saving** (`g20-eco`): the PC stays awake and ready but uses the minimum when nothing needs it.
 
+## What it looks like
+
+| | |
+|---|---|
+| ![Open apps](docs/app-switcher.png) | **App switcher**: cards of the open windows with live pictures. OK opens, OK held 3 s closes a frozen app. |
+| ![Input picker](docs/source-picker.png) | **TV input picker**: choose the HDMI input with the D-pad, the TV switches through Home Assistant. |
+| ![Keyboard](docs/keyboard.png) | **On-screen keyboard** for searches (D-pad or air mouse, voice if set up). |
+| ![Quality checklist](docs/audio-truehd.png) | **Quality checklist** when a film starts: untouched Dolby TrueHD bitstream, lossless, 4K 60 Hz. Amber when something lowers the quality ([more](docs/setup-guide.md#9-what-it-looks-like-and-ideas)). |
+| ![Scene notice](docs/notice-ok.png) | **Scene button**: one press starts a Home Assistant scene ("Movie time"), a notice confirms it for 3 seconds. |
+
+**New here? Read the [step-by-step setup guide](docs/setup-guide.md)**: install, teach the remote, TV control through Home Assistant, the pages, voice, lossless sound,
+the scene button, every configuration key, ideas and troubleshooting.
+
 ## Quick start
 
 ```bash
@@ -39,7 +52,7 @@ git clone https://github.com/silkyclouds/g20s-remote-linux && cd g20s-remote-lin
 ./install.sh
 ```
 
-`install.sh` installs everything in your home directory, then runs a **first-run wizard** (it asks for your `sudo` password for the key remap):
+`install.sh` first checks what your computer has (and tells you what to install if something is missing), installs everything in your home directory, then runs a **first-run wizard** (it asks for your `sudo` password for the key remap):
 
 1. *Press any button on your remote.* It is identified (2.4 GHz dongle or Bluetooth, any brand).
 2. For every function it asks you to **press the matching button**: Up, Down, Left, Right, OK, Back, Home, Power, Volume +, Volume -, Mute, Mic/Search,
