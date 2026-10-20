@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Home button: bring your "home" app to the front in full screen, or start it if it is not running (KDE Plasma / Wayland).
+# Config (~/.config/g20/g20.conf):  G20_HOME_MATCH=plezy  G20_HOME_PROC=plezy  G20_HOME_CMD=plezy  G20_HOME_FULLSCREEN=1
+set -u
+[ -f "$HOME/.config/g20/g20.conf" ] && . "$HOME/.config/g20/g20.conf"
+MATCH=${G20_HOME_MATCH:-plezy}; PROC=${G20_HOME_PROC:-plezy}; CMD=${G20_HOME_CMD:-plezy}; FS=${G20_HOME_FULLSCREEN:-1}
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+js=$XDG_RUNTIME_DIR/g20-home.js
+cat > "$js" <<JS
+for (const w of workspace.windowList()) {
+  const c = ((w.resourceClass || "") + " " + (w.desktopFileName || "") + " " + (w.caption || "")).toLowerCase();
+  if (c.includes("$MATCH")) { w.minimized = false; if ($FS) w.fullScreen = true; workspace.activeWindow = w; break; }
+}
+JS
+raise() {
+  id=$(qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$js" g20-home) || return 1
+  qdbus org.kde.KWin "/Scripting/Script$id" org.kde.kwin.Script.run >/dev/null
+  sleep 0.4
+  qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript g20-home >/dev/null 2>&1
+}
+if pgrep -x "$PROC" >/dev/null; then
+  raise
+else
+  setsid $CMD >/dev/null 2>&1 &
+  for i in $(seq 1 30); do sleep 1; pgrep -x "$PROC" >/dev/null && sleep 2 && raise && [ "$i" -gt 4 ] && break; done
+fi

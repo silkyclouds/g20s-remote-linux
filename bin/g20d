@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""g20d - daemon for the JZK G20S Pro Plus remote (2.4 GHz dongle, USB 4842:0001, "HAOBO Technology USB Composite Device").
+
+Read-only on evdev (nothing is grabbed, so every key the hwdb did not remap still reaches the focused application).
+The hwdb file remaps Power / Vol+ / Vol- / Mute / Home / 1 / 2 / 3 to keys that no desktop uses (KEY_PROG1..4, KEY_MACRO1..4);
+this daemon listens for those and runs the matching action. See README.md for the full mapping.
+
+Configuration: ~/.config/g20/g20.conf (KEY=VALUE lines)
+  G20_DEVICE_NAME      substring of the evdev device name (default: HAOBO)
+  G20_HA_WEBHOOK_URL   Home Assistant webhook (POST {"action": "power|volup|voldown|mute"})
+  G20_CMD_POWER / G20_CMD_VOLUP / G20_CMD_VOLDOWN / G20_CMD_MUTE   shell command instead of the webhook (any backend: CEC, IR, ...)
+"""
+import json, os, select, struct, subprocess, sys, threading, time, urllib.request
+
+KEY_PROG1, KEY_PROG2, KEY_PROG3, KEY_PROG4 = 148, 149, 202, 203
+KEY_MACRO1, KEY_MACRO2, KEY_MACRO3, KEY_MACRO4 = 656, 657, 658, 659
+KEY_VOICECOMMAND = 582
+ACTIONS = {KEY_PROG1: "power", KEY_PROG2: "volup", KEY_PROG3: "voldown", KEY_PROG4: "mute"}
+REPEAT = {"volup", "voldown"}
+MIN_GAP = {"power": 3.0, "mute": 0.8, "volup": 0.25, "voldown": 0.25}
+BIN = os.path.dirname(os.path.realpath(__file__))
+FMT = "llHHi"; SZ = struct.calcsize(FMT)
+
+def log(*a): print(*a, flush=True)
+
+def load_conf():
+    conf = {}
+    p = os.path.expanduser("~/.config/g20/g20.conf")
+    if os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l and not l.startswith("#") and "=" in l:
+                k, v = l.split("=", 1); conf[k.strip()] = v.strip().strip('"')
+    return conf
+CONF = load_conf()
+
+def tv(action):
+    def go():
+        cmd = CONF.get("G20_CMD_" + action.upper())
+        if cmd:
+            subprocess.run(cmd, shell=True, timeout=10); log("tv", action, "(command)"); return
+        url = CONF.get("G20_HA_WEBHOOK_URL")
+        if not url: log("tv", action, "no backend configured"); return
+        try:
+            r = urllib.request.Request(url, data=json.dumps({"action": action}).encode(),
+                                       headers={"Content-Type": "application/json"}, method="POST")
+            log("tv", action, urllib.request.urlopen(r, timeout=8).status)
+        except Exception as e: log("tv", action, "FAILED", e)
+    threading.Thread(target=go, daemon=True).start()
+
+def pause_media():
+    """Power turns the TV off: pause every MPRIS player that is playing, so nothing plays to an empty room."""
+    def go():
+        try:
+            names = [l.split()[0] for l in subprocess.run(["busctl", "--user", "list", "--no-legend"], capture_output=True,
+                     text=True, timeout=5).stdout.splitlines() if l.startswith("org.mpris.MediaPlayer2.")]
+            for n in names:
+                st = subprocess.run(["busctl", "--user", "get-property", n, "/org/mpris/MediaPlayer2",
+                                     "org.mpris.MediaPlayer2.Player", "PlaybackStatus"], capture_output=True, text=True, timeout=5).stdout
+                if "Playing" in st:
+                    subprocess.run(["busctl", "--user", "call", n, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", "Pause"], timeout=5)
+                    log("paused", n)
+        except Exception as e: log("pause FAILED", e)
+    threading.Thread(target=go, daemon=True).start()
+
+def run(*cmd):
+    subprocess.Popen([os.path.join(BIN, cmd[0]), *cmd[1:]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def find_devices():
+    name = CONF.get("G20_DEVICE_NAME", "HAOBO"); r = []
+    for n in sorted(os.listdir("/sys/class/input")):
+        if n.startswith("event"):
+            try:
+                if name in open(f"/sys/class/input/{n}/device/name").read(): r.append("/dev/input/" + n)
+            except OSError: pass
+    return r
+
+last, fds = {}, {}
+log("g20d started")
+while True:
+    if not fds:
+        for d in find_devices():
+            try: fds[os.open(d, os.O_RDONLY | os.O_NONBLOCK)] = d; log("opened", d)
+            except OSError as e: log("cannot open", d, e)
+        if not fds: time.sleep(3); continue
+    r, _, _ = select.select(list(fds), [], [], 5)
+    for fd in r:
+        try: b = os.read(fd, SZ * 32)
+        except OSError:
+            log("lost", fds.pop(fd)); os.close(fd); continue
+        for i in range(0, len(b) - SZ + 1, SZ):
+            _, _, t, c, v = struct.unpack(FMT, b[i:i + SZ])
+            if t != 1: continue
+            a = ACTIONS.get(c)
+            if a and (v == 1 or (v == 2 and a in REPEAT)):
+                now = time.monotonic()
+                if now - last.get(a, 0) >= MIN_GAP[a]:
+                    last[a] = now; tv(a)
+                    if a == "power": pause_media()
+            elif v == 1 and c == KEY_MACRO1: run("g20-home")
+            elif v == 1 and c == KEY_MACRO2: run("g20-window", "prev")
+            elif v == 1 and c == KEY_MACRO3: run("g20-switcher")
+            elif v == 1 and c == KEY_MACRO4: run("g20-window", "next")
+            elif v == 1 and c == KEY_VOICECOMMAND: run("g20-micro-kwin")

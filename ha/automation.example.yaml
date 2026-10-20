@@ -1,0 +1,39 @@
+# Home Assistant: receive the remote's TV actions on a webhook (copy into automations.yaml, then reload automations).
+# Pick any long random webhook id and put the full URL in ~/.config/g20/g20.conf:
+#   G20_HA_WEBHOOK_URL=http://<home-assistant>:8123/api/webhook/<webhook_id>
+# Power toggles using a power-measuring plug on the TV: above 40 W the TV is considered on (many TV integrations report
+# a stale state). Adapt the entity ids. Volume / mute use the TV integration's own commands.
+- id: g20_remote_to_tv
+  alias: G20 remote to TV
+  mode: queued
+  max: 10
+  triggers:
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_A_LONG_RANDOM_ID
+    allowed_methods: [POST]
+    local_only: true
+  actions:
+  - choose:
+    - conditions: '{{ trigger.json.action == "power" }}'
+      sequence:
+      - choose:
+        - conditions: '{{ states("sensor.tv_power_plug") | float(0) > 40 }}'
+          sequence:
+          - action: media_player.turn_off
+            target: {entity_id: media_player.my_tv}
+        default:
+        - action: media_player.turn_on
+          target: {entity_id: media_player.my_tv}
+    - conditions: '{{ trigger.json.action == "volup" }}'
+      sequence:
+      - action: media_player.volume_up
+        target: {entity_id: media_player.my_tv}
+    - conditions: '{{ trigger.json.action == "voldown" }}'
+      sequence:
+      - action: media_player.volume_down
+        target: {entity_id: media_player.my_tv}
+    - conditions: '{{ trigger.json.action == "mute" }}'
+      sequence:
+      - action: media_player.volume_mute
+        target: {entity_id: media_player.my_tv}
+        data: {is_volume_muted: true}

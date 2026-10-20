@@ -1,0 +1,6 @@
+[Unit]
+Description=G20 mic key (active window: %i)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/g20-micro %i

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Keys 1 and 3: previous / next window, like Alt+Tab, through a KWin script (works with full-screen windows).
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+dir=${1:-prev}
+js=$XDG_RUNTIME_DIR/g20-window-$dir.js
+cat > "$js" <<JS
+const dir = "$dir";
+const ws = workspace.stackingOrder.filter(w => w.normalWindow && !w.skipTaskbar && !w.minimized &&
+  w.frameGeometry.width > 400 && w.frameGeometry.height > 300 &&
+  !/plasmashell|xwaylandvideobridge|krunner/i.test((w.resourceClass || "")));
+if (ws.length > 1) workspace.activeWindow = (dir === "prev") ? ws[ws.length - 2] : ws[0];
+JS
+id=$(qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$js" "g20-window-$dir") || exit 1
+qdbus org.kde.KWin "/Scripting/Script$id" org.kde.kwin.Script.run >/dev/null
+sleep 0.4
+qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "g20-window-$dir" >/dev/null 2>&1

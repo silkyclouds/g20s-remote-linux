@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""g20-capture - read the scancodes your remote sends (run with sudo).
+Usage:  sudo g20-capture                 -> walks through a default key list
+        sudo g20-capture 1 2 3           -> only the keys you name (labels are free text)
+It GRABS the remote while running, so pressing Power cannot suspend the PC. The result is written to ~/g20-capture.json.
+Use the MSC_SCAN values in hwdb/61-g20s-remote.hwdb."""
+import fcntl, os, select, struct, sys, time, re, json
+EVIOCGRAB = 0x40044590
+EV_KEY, EV_MSC, EV_REL, EV_ABS = 1, 4, 2, 3
+NAME = os.environ.get("G20_DEVICE_NAME", "HAOBO")
+dev = []
+for n in sorted(os.listdir("/sys/class/input")):
+    if n.startswith("event"):
+        try:
+            if NAME in open(f"/sys/class/input/{n}/device/name").read(): dev.append("/dev/input/" + n)
+        except OSError: pass
+if not dev: sys.exit("Remote not found (is the dongle plugged in?)")
+print("Devices:", ", ".join(dev))
+names = {}
+try:
+    for l in open("/usr/include/linux/input-event-codes.h"):
+        m = re.match(r"#define\s+((?:KEY|BTN)_\w+)\s+(0x[0-9a-fA-F]+|\d+)\s*$", l)
+        if m: names.setdefault(int(m.group(2), 0), m.group(1))
+except OSError: pass
+fds = {}
+for d in dev:
+    fd = os.open(d, os.O_RDONLY | os.O_NONBLOCK); fcntl.ioctl(fd, EVIOCGRAB, 1); fds[fd] = d
+steps = sys.argv[1:] or ["OK", "Up", "Power", "Vol+", "Vol-", "Mute", "Mic", "Home", "Back", "Play/Pause", "1", "2", "3"]
+def drain():
+    out = []
+    for fd in list(fds):
+        try:
+            while True:
+                b = os.read(fd, 24 * 64)
+                if not b: break
+                for i in range(0, len(b) - 23, 24):
+                    s, us, t, c, v = struct.unpack("llHHi", b[i:i + 24]); out.append((fds[fd][-7:], t, c, v))
+        except BlockingIOError: pass
+    return out
+res = {}
+print("Press ONE key when asked (20 s timeout).\n")
+try:
+    for step in steps:
+        drain(); print(f">>> {step} ... ", end="", flush=True)
+        t0, got = time.time(), []
+        while time.time() - t0 < 20 and not got:
+            select.select(list(fds), [], [], 0.2); got = [e for e in drain() if e[1] in (EV_KEY, EV_MSC)]
+        if not got: print("nothing"); res[step] = None; continue
+        time.sleep(0.8); got += [e for e in drain() if e[1] in (EV_KEY, EV_MSC)]
+        seen, desc = set(), []
+        for dv, t, c, v in got:
+            d = f"{dv} MSC_SCAN=0x{v & 0xffffffff:x}" if t == EV_MSC else f"{dv} KEY {c} {names.get(c, '?')} ({'press' if v == 1 else 'release'})"
+            if d not in seen: seen.add(d); desc.append(d)
+        res[step] = desc; print("; ".join(desc)); time.sleep(0.6)
+finally:
+    for fd in fds: os.close(fd)
+out = os.path.expanduser("~" + os.environ.get("SUDO_USER", "")) + "/g20-capture.json"
+json.dump(res, open(out, "w"), indent=1); print("\nWritten:", out)

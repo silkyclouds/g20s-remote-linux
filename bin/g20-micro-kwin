@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Read the active window class (KWin script) and start g20-micro@<class>.service.
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+js=$XDG_RUNTIME_DIR/g20-micro.js
+cat > "$js" <<'JS'
+const w = workspace.activeWindow;
+let c = w ? ((w.resourceClass || "") + (w.desktopFileName || "")).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+if (!c) c = "inconnu";
+callDBus("org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "StartUnit",
+         "g20-micro@" + c + ".service", "replace");
+JS
+id=$(qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$js" g20-micro) || exit 1
+qdbus org.kde.KWin "/Scripting/Script$id" org.kde.kwin.Script.run >/dev/null
+sleep 0.5
+qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript g20-micro >/dev/null 2>&1

@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""g20-switcher-server: local server of the TV-style app switcher (UI by Claude Design, served verbatim).
+GET /, /api/windows, /thumbs/<id>.jpg, /icons/<id>
+POST /api/toggle (key 2: open / close if in front / raise), /api/focus {id}, /api/kill {id}, /api/close
+Windows are listed by a KWin script that calls back this process over D-Bus (org.g20.Switcher); thumbnails come from
+KWin's ScreenShot2.CaptureWindow, so this process must run with ~/.local/libexec/g20/python3, the interpreter copy that
+g20-switcher-shot.desktop authorizes. One switcher at a time, always."""
+import io, json, os, re, signal, subprocess, sys, threading, time, glob
+from concurrent.futures import ThreadPoolExecutor
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+import gi
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+from PIL import Image
+
+PORT = 48765
+ROOT = os.path.expanduser("~/.local/share/g20-switcher")
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-switcher")
+os.makedirs(RUN + "/thumbs", exist_ok=True); os.makedirs(RUN + "/js", exist_ok=True)
+TITLE = "Open apps"                      # <title> of the Claude Design page = the switcher window
+def browser_command():
+    """Chrome / Chromium in kiosk app mode on the local page. Override with G20_BROWSER="full command" (the URL is appended)."""
+    import shutil
+    url = "http://127.0.0.1:%d/" % PORT
+    flags = ["--app=" + url, "--kiosk", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
+             "--autoplay-policy=no-user-gesture-required"]
+    if os.environ.get("G20_BROWSER"):
+        return os.environ["G20_BROWSER"].split() + ["--app=" + url, "--kiosk"]
+    for b in ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser"):
+        if shutil.which(b):
+            return [b, "--user-data-dir=" + os.path.expanduser("~/.config/g20-switcher-profile")] + flags
+    home = os.path.expanduser("~")
+    for app in ("com.google.Chrome", "org.chromium.Chromium"):
+        if shutil.which("flatpak") and subprocess.run(["flatpak", "info", app], capture_output=True).returncode == 0:
+            return ["flatpak", "run", app, "--user-data-dir=%s/.var/app/%s/config/g20-switcher" % (os.path.realpath(home), app)] + flags
+    sys.exit("No Chrome/Chromium found: install one or set G20_BROWSER")
+CHROME = browser_command()
+SKIP_CLASSES = re.compile(r"plasmashell|xwaylandvideobridge|krunner|steamwebhelper|ksmserver|kwin", re.I)
+def log(*a): print(*a, flush=True)
+
+# ---------- D-Bus: answers from KWin scripts ----------
+pending, lock = {}, threading.Lock()
+XML = '<node><interface name="org.g20.Switcher"><method name="Report"><arg type="s" name="json" direction="in"/><arg type="s" name="tag" direction="in"/></method></interface></node>'
+def on_call(conn, sender, path, iface, method, params, inv):
+    js, tag = params.unpack()
+    with lock: slot = pending.get(tag)
+    if slot:
+        try: slot["data"] = json.loads(js)
+        except Exception: slot["data"] = None
+        slot["ev"].set()
+    inv.return_value(None)
+def dbus_thread():
+    def on_bus(conn, name):
+        conn.register_object("/org/g20/Switcher", Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0], on_call, None, None)
+    Gio.bus_own_name(Gio.BusType.SESSION, "org.g20.Switcher", Gio.BusNameOwnerFlags.REPLACE, on_bus, None, None)
+    GLib.MainLoop().run()
+threading.Thread(target=dbus_thread, daemon=True).start()
+
+def kwin(body, wait=False, timeout=6):
+    tag = "t%d" % int(time.time() * 1000000)
+    ev = threading.Event(); slot = {"ev": ev, "data": None}
+    if wait:
+        with lock: pending[tag] = slot
+    path = "%s/js/%s.js" % (RUN, tag)
+    open(path, "w").write(body.replace("__TAG__", tag))
+    env = dict(os.environ, WAYLAND_DISPLAY="wayland-0")
+    sid = subprocess.run(["qdbus", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.loadScript", path, tag], capture_output=True, text=True, env=env).stdout.strip()
+    subprocess.run(["qdbus", "org.kde.KWin", "/Scripting/Script" + sid, "org.kde.kwin.Script.run"], capture_output=True, env=env)
+    res = None
+    if wait: ev.wait(timeout); res = slot["data"]; 
+    subprocess.run(["qdbus", "org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.unloadScript", tag], capture_output=True, env=env)
+    with lock: pending.pop(tag, None)
+    try: os.remove(path)
+    except OSError: pass
+    return res
+
+LIST_JS = """
+const out = workspace.stackingOrder.map(w => ({id: String(w.internalId), pid: w.pid, cls: w.resourceClass || "", desktop: w.desktopFileName || "",
+  title: w.caption || "", normal: !!w.normalWindow, skip: !!w.skipTaskbar, min: !!w.minimized, full: !!w.fullScreen,
+  w: Math.round(w.frameGeometry.width), h: Math.round(w.frameGeometry.height), active: w === workspace.activeWindow}));
+callDBus("org.g20.Switcher", "/org/g20/Switcher", "org.g20.Switcher", "Report", JSON.stringify(out), "__TAG__");
+"""
+def focus_js(target, close_switcher=True):
+    return """const target = %s;
+for (const w of workspace.windowList()) { if (String(w.internalId) === target) { w.minimized = false; workspace.activeWindow = w; } }
+%s""" % (json.dumps(target), ("for (const w of workspace.windowList()) { if (w.caption === %s && /chrome/i.test(w.resourceClass || '')) w.closeWindow(); }" % json.dumps(TITLE)) if close_switcher else "")
+RAISE_SWITCHER_JS = """for (const w of workspace.windowList()) { if (w.caption === %s && /chrome/i.test(w.resourceClass || '')) { w.minimized = false; w.fullScreen = true; workspace.activeWindow = w; } }""" % json.dumps(TITLE)
+CLOSE_SWITCHER_JS = """for (const w of workspace.windowList()) { if (w.caption === %s && /chrome/i.test(w.resourceClass || '')) w.closeWindow(); }""" % json.dumps(TITLE)
+
+# ---------- names / icons ----------
+_names = {}
+def app_info(w):
+    key = (w["desktop"], w["cls"])
+    if key in _names: return _names[key]
+    name, icon = None, None
+    for cand in [w["desktop"], w["cls"], w["cls"].lower(), w["cls"].split(".")[-1], w["cls"].split(".")[-1].lower()]:
+        if not cand: continue
+        try:
+            ai = Gio.DesktopAppInfo.new(cand if cand.endswith(".desktop") else cand + ".desktop")
+        except Exception: ai = None
+        if ai:
+            name = ai.get_name(); ic = ai.get_icon()
+            icon = ic.get_names()[0] if ic and hasattr(ic, "get_names") and ic.get_names() else None
+            break
+    if icon: icon = find_icon(icon)
+    _names[key] = (name or (w["cls"].split(".")[-1].capitalize() if w["cls"] else ""), icon); return _names[key]
+def find_icon(name):
+    if os.path.isabs(name) and os.path.exists(name): return name
+    pats = [os.path.expanduser("~/.local/share/icons/hicolor/*/apps/%s.*" % name), "/usr/share/icons/hicolor/*/apps/%s.*" % name,
+            os.path.expanduser("~/.local/share/flatpak/exports/share/icons/hicolor/*/apps/%s.*" % name),
+            "/var/lib/flatpak/exports/share/icons/hicolor/*/apps/%s.*" % name, "/usr/share/pixmaps/%s.*" % name]
+    best = None
+    for p in pats:
+        for f in glob.glob(p):
+            if f.endswith((".png", ".svg")):
+                m = re.search(r"/(\d+)x\d+/", f); sz = int(m.group(1)) if m else (9999 if f.endswith(".svg") else 0)
+                if best is None or sz > best[0]: best = (sz, f)
+    return best[1] if best else None
+
+# ---------- screenshots ----------
+def capture(uid, outpath):
+    r, wfd = os.pipe(); buf = bytearray()
+    def reader():
+        while True:
+            b = os.read(r, 1 << 20)
+            if not b: break
+            buf.extend(b)
+    t = threading.Thread(target=reader); t.start()
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None); fl = Gio.UnixFDList(); fl.append(wfd)
+    args = GLib.Variant("(sa{sv}h)", (uid, {"include-cursor": GLib.Variant("b", False)}, 0))
+    try:
+        res, _ = bus.call_with_unix_fd_list_sync("org.kde.KWin", "/org/kde/KWin/ScreenShot2", "org.kde.KWin.ScreenShot2", "CaptureWindow",
+                                                 args, None, Gio.DBusCallFlags.NONE, 8000, fl, None)
+    finally:
+        os.close(wfd); fl = None; import gc; gc.collect(); t.join(8); os.close(r)
+    info = res.unpack()[0]; w, h, stride = info["width"], info["height"], info["stride"]
+    im = Image.frombuffer("RGBA", (w, h), bytes(buf), "raw", "BGRA", stride, 1).convert("RGB")
+    im.thumbnail((960, 540), Image.BILINEAR); im.save(outpath, "JPEG", quality=82)
+
+# ---------- state ----------
+state = {"items": [], "ready": threading.Event(), "pids": {}, "cls": {}}
+pool = ThreadPoolExecutor(4)
+def snapshot():
+    """List windows (top first), start the screenshots, fill state."""
+    data = kwin(LIST_JS, wait=True) or []
+    for f in glob.glob(RUN + "/thumbs/*"): 
+        try: os.remove(f)
+        except OSError: pass
+    wins = [w for w in reversed(data) if w["normal"] and not w["skip"] and w["pid"] and w["title"] != TITLE and not SKIP_CLASSES.search(w["cls"]) and w["w"] > 300 and w["h"] > 200]
+    items, jobs = [], []
+    for w in wins:
+        key = w["id"].strip("{}"); name, icon = app_info(w)
+        it = {"id": w["id"], "pid": w["pid"], "app": name, "title": w["title"], "icon": ("/icons/" + key) if icon else None,
+              "thumb": "/thumbs/%s.jpg" % key, "active": w["active"], "_icon": icon}
+        items.append(it)
+        jobs.append(pool.submit(lambda u=w["id"], k=key: _safe_capture(u, k)))
+    state["items"] = items; state["pids"] = {i["id"]: i["pid"] for i in items}; state["cls"] = {w["id"]: w["cls"] for w in wins}
+    state["jobs"] = jobs; state["ready"].set(); log("snapshot:", len(items), "windows")
+def _safe_capture(uid, key):
+    try: capture(uid, "%s/thumbs/%s.jpg" % (RUN, key))
+    except Exception as e: log("capture failed", uid, str(e)[:120])
+def switcher_state():
+    data = kwin(LIST_JS, wait=True) or []
+    for w in data:
+        if w["title"] == TITLE and re.search("chrome", w["cls"], re.I): return w
+    return None
+
+def toggle():
+    sw = switcher_state()
+    if sw:
+        if sw["active"]: kwin(CLOSE_SWITCHER_JS); log("toggle: closed")
+        else: kwin(RAISE_SWITCHER_JS); log("toggle: raised")
+        return
+    state["ready"].clear(); snapshot()                       # state BEFORE the switcher opens
+    subprocess.Popen(CHROME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(40):                                       # wait for the window, then raise it full screen
+        time.sleep(0.25)
+        if switcher_state(): kwin(RAISE_SWITCHER_JS); break
+    log("toggle: opened")
+
+def kill_app(wid):
+    pid = state["pids"].get(wid); cls = state["cls"].get(wid, "")
+    if not pid: return
+    log("kill", pid, cls)
+    try: os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError: return
+    for _ in range(30):
+        time.sleep(0.1)
+        try: os.kill(pid, 0)
+        except ProcessLookupError: break
+    else:
+        try: os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+    if cls.lower() == "steam":                                # Steam was killed: bring Big Picture back
+        time.sleep(3)
+        heal = os.path.expanduser("~/.local/bin/steam-selfheal")          # Bazzite helper when present
+        cmd = [heal, "--bpm"] if os.path.exists(heal) else ["steam", "-bigpicture"]
+        subprocess.Popen(["systemd-run", "--user", "--collect", "--unit=g20-steam-relaunch-%d" % int(time.time())] + cmd,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+# ---------- HTTP ----------
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, body=b"", ctype="application/json", cache=False):
+        self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body)
+    def _file(self, path, ctype):
+        try: data = open(path, "rb").read()
+        except OSError: return self._send(404)
+        self._send(200, data, ctype)
+    def do_GET(self):
+        p = self.path.split("?")[0]
+        if p in ("/", "/index.html"): return self._file(ROOT + "/index.html", "text/html; charset=utf-8")
+        if p.startswith("/echantillons/"): return self._file(ROOT + p, "image/jpeg")
+        if p == "/api/windows":
+            if not state["ready"].is_set(): snapshot()
+            for j in state.get("jobs", []):
+                try: j.result(timeout=10)
+                except Exception: pass
+            items = []
+            for it in state["items"]:
+                key = it["id"].strip("{}"); d = {k: v for k, v in it.items() if k != "_icon"}
+                if not os.path.exists("%s/thumbs/%s.jpg" % (RUN, key)): d["thumb"] = None
+                items.append(d)
+            return self._send(200, json.dumps(items).encode())
+        m = re.match(r"/thumbs/([0-9a-f-]+)\.jpg$", p)
+        if m: return self._file("%s/thumbs/%s.jpg" % (RUN, m.group(1)), "image/jpeg")
+        m = re.match(r"/icons/([0-9a-f-]+)$", p)
+        if m:
+            for it in state["items"]:
+                if it["id"].strip("{}") == m.group(1) and it.get("_icon"):
+                    ic = it["_icon"]; return self._file(ic, "image/svg+xml" if ic.endswith(".svg") else "image/png")
+        self._send(404)
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0); body = {}
+        if n:
+            try: body = json.loads(self.rfile.read(n))
+            except Exception: pass
+        p = self.path
+        if p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
+        elif p == "/api/focus": threading.Thread(target=lambda: kwin(focus_js(body.get("id", ""))), daemon=True).start()
+        elif p == "/api/kill": threading.Thread(target=kill_app, args=(body.get("id", ""),), daemon=True).start()
+        elif p == "/api/close": threading.Thread(target=lambda: kwin(CLOSE_SWITCHER_JS), daemon=True).start()
+        else: return self._send(404)
+        self._send(200, b"{}")
+
+if __name__ == "__main__":
+    ThreadingHTTPServer.allow_reuse_address = True
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H); log("g20-switcher-server on 127.0.0.1:%d" % PORT); srv.serve_forever()

@@ -1,0 +1,9 @@
+[Unit]
+Description=ydotoold (key injection for the mic key)
+
+[Service]
+ExecStart=/usr/bin/ydotoold --socket-path=%t/.ydotool_socket --socket-perm=0600
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

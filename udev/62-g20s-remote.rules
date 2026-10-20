@@ -1,0 +1,2 @@
+# Let the logged-in user read the remote (g20d runs unprivileged and read-only).
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="4842", ATTRS{idProduct}=="0001", TAG+="uaccess"

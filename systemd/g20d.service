@@ -1,0 +1,11 @@
+[Unit]
+Description=G20S remote daemon (TV control, Home, window switching, app switcher)
+
+[Service]
+ExecStart=%h/.local/bin/g20d
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=default.target

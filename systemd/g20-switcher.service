@@ -1,0 +1,12 @@
+[Unit]
+Description=App switcher of the G20 remote (local server)
+
+[Service]
+Environment=PYTHONHOME=@PYTHONHOME@
+ExecStart=%h/.local/libexec/g20/python3 %h/.local/bin/g20-switcher-server
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=default.target

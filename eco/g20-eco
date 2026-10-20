@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""g20-eco: the PC stays awake and ready (e.g. for a local Ollama), but uses the minimum when nothing needs it.
+
+When idle (no video playback = GPU video decoder at 0, no game / emulator, no Ollama inference, CPU and GPU quiet) for 90 s:
+CPU energy-performance preference 'power' and turbo off. At the first sign of activity it goes back to the original setting.
+No suspend, no service stopped. Runs as root (writes /sys), reads only /proc and nvidia-smi. AMD amd-pstate-epp / Intel EPP."""
+import glob, os, subprocess, sys, time
+
+POLL = 4                  # seconds between two samples
+IDLE_BEFORE_ECO = int(os.environ.get('G20_ECO_DELAI', 90))      # calm seconds before eco mode
+CPU_BUSY = 0.25           # share of total CPU above which we are active
+LLAMA_BUSY = 0.25         # share of one core for llama-server/ollama
+GPU_UTIL_BUSY = 70        # GPU % (a media app's UI alone sits near 30%)
+GPU_POWER_BUSY = 140      # W (idle with a media UI ~35-80 W, inference 200 W+)
+GAMES = {"gamescope", "retroarch", "rpcs3", "eden", "yuzu", "ryujinx", "dolphin-emu", "pcsx2-qt", "duckstation-qt",
+         "cemu", "shadps4", "azahar", "xemu", "ppsspp", "melonds", "flycast", "vita3k", "kyty"}
+EPP = sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/energy_performance_preference"))
+BOOST = "/sys/devices/system/cpu/cpufreq/boost"
+STATE = "/run/g20-eco.state"
+
+def log(*a): print(*a, flush=True)
+def lire(p):
+    try: return open(p).read().strip()
+    except OSError: return None
+def ecrire(p, v):
+    try: open(p, "w").write(v)
+    except OSError as e: log("write failed", p, e)
+
+orig = {"epp": lire(EPP[0]) if EPP else None, "boost": lire(BOOST)}
+log("original setting:", orig)
+
+def apply_mode(eco):
+    for p in EPP: ecrire(p, "power" if eco else orig["epp"])
+    if orig["boost"] is not None: ecrire(BOOST, "0" if eco else orig["boost"])
+
+def restore(*_):
+    apply_mode(False); log("restored, exiting"); sys.exit(0)
+import signal
+signal.signal(signal.SIGTERM, restore); signal.signal(signal.SIGINT, restore)
+
+def proc_table():
+    t = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit(): continue
+        try:
+            s = open(f"/proc/{d}/stat").read()
+            comm = s[s.index("(") + 1:s.rindex(")")]; f = s[s.rindex(")") + 2:].split()
+            t[int(d)] = (comm, int(f[11]) + int(f[12]))   # utime + stime
+        except (OSError, ValueError): pass
+    return t
+
+def cpu_total():
+    f = open("/proc/stat").readline().split()[1:]
+    v = list(map(int, f)); return sum(v), v[3] + v[4]
+
+def gpu():
+    try:
+        o = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu,utilization.decoder,utilization.encoder,power.draw",
+                            "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=5).stdout.split(",")
+        return [float(x) for x in o]
+    except Exception: return None
+
+MEDIA_APPS = (b"plezy", b"vacuumtube", b"/roms/desktop/", b"jellyfin", b"kodi", b"plex")   # Steam shortcuts that are not games
+
+def steam_game():
+    """Real Steam game: 'reaper SteamLaunch AppId=... -- <game>' whose command is not a media app."""
+    for d in os.listdir("/proc"):
+        if d.isdigit():
+            try:
+                a = open(f"/proc/{d}/cmdline", "rb").read().split(b"\0")
+            except OSError: continue
+            if b"SteamLaunch" in a[:3]:
+                rest = b" ".join(a).lower()
+                if not any(m in rest for m in MEDIA_APPS): return True
+    return False
+
+hz = os.sysconf("SC_CLK_TCK")
+prev_t, prev_p, prev_time = cpu_total(), proc_table(), time.monotonic()
+mode, calm_since = "normal", None
+apply_mode(False)
+while True:
+    time.sleep(POLL)
+    now = time.monotonic(); dt = now - prev_time
+    tot, idle = cpu_total(); p = proc_table()
+    cpu = 1 - (idle - prev_t[1]) / max(1, tot - prev_t[0])
+    llama = sum(max(0, p[k][1] - prev_p[k][1]) for k in p if k in prev_p and p[k][0] in ("llama-server", "ollama")) / hz / dt
+    comms = {c for c, _ in p.values()}
+    g = gpu(); reasons = []
+    if cpu > CPU_BUSY: reasons.append(f"cpu {cpu:.0%}")
+    if llama > LLAMA_BUSY: reasons.append("ollama")
+    if comms & GAMES: reasons.append("jeu/emulateur")
+    if steam_game(): reasons.append("jeu steam")
+    if g:
+        if g[0] > GPU_UTIL_BUSY: reasons.append(f"gpu {g[0]:.0f}%")
+        if g[1] > 0 or g[2] > 0: reasons.append("video (decodeur gpu)")
+        if g[3] > GPU_POWER_BUSY: reasons.append(f"gpu {g[3]:.0f} W")
+    prev_t, prev_p, prev_time = (tot, idle), p, now
+    if reasons:
+        calm_since = None
+        if mode != "normal": apply_mode(False); mode = "normal"; log("normal:", ", ".join(reasons))
+    else:
+        calm_since = calm_since or now
+        if mode != "eco" and now - calm_since >= IDLE_BEFORE_ECO: apply_mode(True); mode = "eco"; log("eco: calm for", IDLE_BEFORE_ECO, "s")
+    try: open(STATE, "w").write(f"{mode} {time.strftime('%F %T')} {','.join(reasons) or 'calm'}\n")
+    except OSError: log("state:", mode, ",".join(reasons) or "calm")
