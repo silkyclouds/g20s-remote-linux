@@ -2,8 +2,8 @@
 # Home button: bring your "home" app to the front in full screen, or start it if it is not running (KDE Plasma / Wayland).
 # Config (~/.config/g20/g20.conf):  G20_HOME_MATCH=plezy  G20_HOME_PROC=plezy  G20_HOME_CMD=plezy  G20_HOME_FULLSCREEN=1
 set -u
-[ -f "$HOME/.config/g20/g20.conf" ] && . "$HOME/.config/g20/g20.conf"
-MATCH=${G20_HOME_MATCH:-plezy}; PROC=${G20_HOME_PROC:-plezy}; CMD=${G20_HOME_CMD:-plezy}; FS=${G20_HOME_FULLSCREEN:-1}
+conf() { grep -E "^$1=" "$HOME/.config/g20/g20.conf" 2>/dev/null | tail -1 | cut -d= -f2- | sed 's/^"//; s/"$//'; }
+MATCH=$(conf G20_HOME_MATCH); MATCH=${MATCH:-plezy}; PROC=$(conf G20_HOME_PROC); PROC=${PROC:-plezy}; CMD=$(conf G20_HOME_CMD); CMD=${CMD:-plezy}; FS=$(conf G20_HOME_FULLSCREEN); FS=${FS:-1}
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 js=$XDG_RUNTIME_DIR/g20-home.js
 cat > "$js" <<JS

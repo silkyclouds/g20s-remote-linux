@@ -1,3 +1,9 @@
 #!/usr/bin/env bash
-# Source key: open the TV input (HDMI) picker; pressing it again closes it (or raises it if it is behind). Never two.
+# Source key. Default: open the TV input picker on this PC (press again to close).
+# With G20_SOURCE_VIA_HA=1 (and a Home Assistant webhook): Home Assistant decides. If the TV shows the PC's input it asks this PC to
+# show the picker; if the TV is on another input (you cannot see the PC's screen) each press selects the next HDMI input blindly.
+conf() { grep -E "^$1=" "$HOME/.config/g20/g20.conf" 2>/dev/null | tail -1 | cut -d= -f2- | sed 's/^"//; s/"$//'; }
+if [ "$(conf G20_SOURCE_VIA_HA)" = 1 ] && [ -n "$(conf G20_HA_WEBHOOK_URL)" ]; then
+  curl -s -m 8 -X POST -H 'Content-Type: application/json' -d '{"action":"source_key"}' "$(conf G20_HA_WEBHOOK_URL)" >/dev/null && exit 0
+fi
 curl -s -m 5 -X POST http://127.0.0.1:48765/api/sources/open >/dev/null

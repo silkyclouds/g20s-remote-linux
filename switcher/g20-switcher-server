@@ -307,7 +307,21 @@ def toggle_sources():
         time.sleep(0.25)
         if any(is_sources(w) for w in (kwin(LIST_JS, wait=True) or [])): kwin(SRC_RAISE_JS); break
 
-def select_source(sid):
+
+def source_key(cur):
+    """Source key pressed (Home Assistant reports the TV's current input in `cur`):
+    - the TV shows this PC (cur is G20_PC_INPUT, default hdmi4, or unknown): show the input picker here;
+    - the TV is on another input (you cannot see this PC): select the NEXT input of G20_SOURCES blindly, press again for the next one."""
+    cur = (cur or "").strip().lower()
+    ids = [i["id"].lower() for i in sources_list()]
+    pc = [x.strip().lower() for x in CONF.get("G20_PC_INPUT", "hdmi4").split(",") if x.strip()]
+    log("source key: TV input =", repr(cur), "pc =", pc)
+    if not cur or cur in pc:
+        toggle_sources(); return
+    nxt = ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else ids[0]      # TV tuner or unknown input: start at the first
+    log("source key: blind cycle ->", nxt); select_source(nxt, close=False)
+
+def select_source(sid, close=True):
     open(STATE_DIR + "/source", "w").write(sid)
     cmd = CONF.get("G20_CMD_SOURCE")
     try:
@@ -319,11 +333,23 @@ def select_source(sid):
             log("source", sid, urllib.request.urlopen(r, timeout=8).status)
         else: log("source", sid, "no backend configured")
     except Exception as e: log("source", sid, "FAILED", e)
-    time.sleep(1.6); kwin(SRC_CLOSE_JS)
+    if close: time.sleep(1.6); kwin(SRC_CLOSE_JS)
 
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+    def _local_only(self):
+        """Loopback is trusted. From the LAN only ONE request is allowed: POST /api/remote/source_key?k=<G20_REMOTE_SECRET>&cur=<TV input>
+        from the IP in G20_HA_IP (Home Assistant asks the PC to show the input picker when the TV is on the PC's input)."""
+        ip = self.client_address[0]
+        if ip in ("127.0.0.1", "::1"): return True
+        from urllib.parse import urlparse, parse_qs
+        u = urlparse(self.path); k = parse_qs(u.query).get("k", [""])[0]
+        ok = (self.command == "POST" and u.path in ("/api/remote/sources_open", "/api/remote/source_key") and CONF.get("G20_REMOTE_SECRET") and k == CONF["G20_REMOTE_SECRET"]
+              and ip == CONF.get("G20_HA_IP", ""))
+        if not ok: self._send(403)
+        return ok
+
     def _send(self, code, body=b"", ctype="application/json", cache=False):
         self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store"); self.end_headers(); self.wfile.write(body)
@@ -332,6 +358,7 @@ class H(BaseHTTPRequestHandler):
         except OSError: return self._send(404)
         self._send(200, data, ctype)
     def do_GET(self):
+        if not self._local_only(): return
         p = self.path.split("?")[0]
         if p in ("/", "/index.html"): return self._file(ROOT + "/index.html", "text/html; charset=utf-8")
         if p == "/keyboard.html": return self._file(ROOT + "/keyboard.html", "text/html; charset=utf-8")
@@ -365,12 +392,16 @@ class H(BaseHTTPRequestHandler):
                     ic = it["_icon"]; return self._file(ic, "image/svg+xml" if ic.endswith(".svg") else "image/png")
         self._send(404)
     def do_POST(self):
+        if not self._local_only(): return
         n = int(self.headers.get("Content-Length") or 0); body = {}
         if n:
             try: body = json.loads(self.rfile.read(n))
             except Exception: pass
-        p = self.path
-        if p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
+        from urllib.parse import urlparse as _up, parse_qs as _pq
+        p = self.path.split("?")[0]; q = _pq(_up(self.path).query)
+        if p == "/api/remote/sources_open": threading.Thread(target=toggle_sources, daemon=True).start()
+        elif p == "/api/remote/source_key": threading.Thread(target=source_key, args=(q.get("cur", [""])[0],), daemon=True).start()
+        elif p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
         elif p == "/api/focus": threading.Thread(target=lambda: kwin(focus_js(body.get("id", ""))), daemon=True).start()
         elif p == "/api/kill": threading.Thread(target=kill_app, args=(body.get("id", ""),), daemon=True).start()
         elif p == "/api/keyboard": threading.Thread(target=open_keyboard, args=(body,), daemon=True).start()
@@ -386,4 +417,4 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ThreadingHTTPServer.allow_reuse_address = True
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), H); log("g20-switcher-server on 127.0.0.1:%d" % PORT); srv.serve_forever()
+    srv = ThreadingHTTPServer((CONF.get("G20_BIND", "0.0.0.0" if CONF.get("G20_REMOTE_SECRET") else "127.0.0.1"), PORT), H); log("g20-switcher-server on 127.0.0.1:%d" % PORT); srv.serve_forever()

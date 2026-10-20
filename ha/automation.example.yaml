@@ -42,3 +42,20 @@
       - action: media_player.select_source
         target: {entity_id: media_player.my_tv}
         data: {source: '{{ trigger.json.source }}'}
+    # Optional "smart" Source key (G20_SOURCE_VIA_HA=1): HA reports the TV's current input to the PC.
+    # If the TV shows the PC the picker opens on screen; if the TV is on another input (you cannot see the PC) each press
+    # selects the next HDMI input blindly. Needs the rest_command below, the PC's LAN address and G20_REMOTE_SECRET / G20_HA_IP
+    # in ~/.config/g20/g20.conf (the PC then answers ONLY this one request from Home Assistant's IP).
+    - conditions: '{{ trigger.json.action == "source_key" }}'
+      sequence:
+      - action: rest_command.g20_source_key
+        data:
+          cur: "{{ (state_attr('media_player.my_tv', 'source') or '') | string | lower }}"
+        continue_on_error: true
+#
+# rest_commands.yaml (or configuration.yaml > rest_command:)
+#   g20_source_key:
+#     url: "http://PC_IP:48765/api/remote/source_key?cur={{ cur | urlencode }}&k=THE_SECRET_OF_G20_REMOTE_SECRET"
+#     method: POST
+#     timeout: 5
+

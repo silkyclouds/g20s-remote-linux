@@ -82,6 +82,7 @@ Vol+ `0xc00e9`, Vol- `0xc00ea`, Mute `0xc00e2`, Mic `0xc00cf`, Play `0xc00cd`, P
 
 Press your **Source** button: one card per HDMI input, the current one badged. **Left/right** and **OK** (or the air mouse); the TV switches through the
 Home Assistant webhook (`media_player.select_source`, see `ha/automation.example.yaml`) or your own command (`G20_CMD_SOURCE`, the id is in `$G20_SOURCE`).
+**When the TV is not on the PC's input** you cannot see the picker. With `G20_SOURCE_VIA_HA=1`, Home Assistant tells the PC which input the TV is on: if it is the PC's (`G20_PC_INPUT`, default `hdmi4`), the picker opens; if not, **each press selects the next input blindly** (the TV shows its own banner), until you are back on the PC. See `ha/automation.example.yaml`.
 Declare your inputs in `~/.config/g20/g20.conf` (the wizard asks): `G20_SOURCES=hdmi1:Shield,hdmi2:PC,hdmi3:PlayStation,hdmi4`
 (ids must match your TV integration's source names; the label is optional).
 
