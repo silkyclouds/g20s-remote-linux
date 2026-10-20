@@ -12,6 +12,8 @@ Configuration: ~/.config/g20/g20.conf (KEY=VALUE lines)
   G20_CMD_POWER / G20_CMD_VOLUP / G20_CMD_VOLDOWN / G20_CMD_MUTE   shell command instead of the webhook (any backend: CEC, IR, ...)
   Scene button (optional key, KEY_MACRO6): G20_SCENE_LABEL ("Movie time"), G20_SCENE_WEBHOOK_URL (a Home Assistant webhook that starts the scene) or
   G20_CMD_SCENE (shell command), G20_SCENE_ICON (scene | light | info). A notice slides in at the top right of the screen for 5 s with the result.
+  G20_SCENE_NOTICE=ha : Home Assistant sends the success notice itself (a toggling scene knows if it started or ended, see ha/scene.example.yaml);
+  g20d then only shows a notice when the scene could not be started.
 """
 import json, os, select, struct, subprocess, sys, threading, time, urllib.request
 
@@ -66,6 +68,7 @@ def scene():
             log("scene", label, "ok")
         except Exception as e:
             status, detail = "error", ("Home Assistant did not answer" if url else "Could not start the scene"); log("scene", label, "FAILED", e)
+        if status == "ok" and CONF.get("G20_SCENE_NOTICE") == "ha": return
         try:
             urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:48765/api/notice/show", method="POST", headers={"Content-Type": "application/json"},
                 data=json.dumps({"title": label, "detail": detail, "status": status, "icon": CONF.get("G20_SCENE_ICON", "scene"), "hold": 5000}).encode()), timeout=5)

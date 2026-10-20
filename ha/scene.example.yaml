@@ -1,40 +1,63 @@
 # Scene button: the remote's SCENE key (mapped with `sudo g20-setup --only scene`) starts a Home Assistant scene and the PC shows a
-# 5 s notice at the top right of the screen ("Movie time - Scene started", amber if Home Assistant did not answer).
+# 5 s notice at the top right of the screen. Two flavours below; use ONE.
 #
-# 1) ~/.config/g20/g20.conf:
-#      G20_SCENE_LABEL=Movie time
-#      G20_SCENE_WEBHOOK_URL=http://<home-assistant>:8123/api/webhook/<another_long_random_id>
+# ~/.config/g20/g20.conf:
+#   G20_SCENE_LABEL=Movie time
+#   G20_SCENE_WEBHOOK_URL=http://<home-assistant>:8123/api/webhook/<a_long_random_id>
 #
-# 2) Home Assistant, the webhook that starts the scene:
+# --- A) Simple: the button starts the scene, the PC shows "Movie time - Scene started" itself (green, or amber if Home Assistant did not answer).
 - id: g20_scene_movie_time
   alias: G20 remote scene - Movie time
   mode: single
   triggers:
   - trigger: webhook
-    webhook_id: REPLACE_WITH_ANOTHER_LONG_RANDOM_ID
+    webhook_id: REPLACE_WITH_THE_SAME_LONG_RANDOM_ID
     allowed_methods: [POST]
     local_only: true
   actions:
   - action: scene.turn_on
     target: {entity_id: scene.movie_time}
 
-# 3) Optional, the other direction: when the SAME scene is started from anywhere else (a Zigbee button, the dashboard, a voice command),
-#    the PC announces it too. In configuration.yaml:
-#      rest_command:
-#        g20_notice:
-#          url: "http://<pc-ip>:48765/api/remote/notice?k=<G20_REMOTE_SECRET>"
-#          method: POST
-#          content_type: "application/json"
-#          payload: '{"title": "{{ title }}", "detail": "{{ detail }}", "status": "ok", "icon": "scene", "hold": 5000}'
-#    (the PC accepts that one request only from the IP set in G20_HA_IP, with the secret; set G20_REMOTE_SECRET and G20_HA_IP in g20.conf)
-#    and an automation:
-- id: g20_scene_movie_time_notice
-  alias: Tell the PC when Movie time starts
+# --- B) Toggle with the right message: a second press leaves the scene, and Home Assistant itself tells the PC which message to show.
+#     Add G20_SCENE_NOTICE=ha to g20.conf (the PC then only complains when the webhook fails), set G20_REMOTE_SECRET and G20_HA_IP in g20.conf, and in
+#     rest_commands.yaml (`rest_command: !include rest_commands.yaml`):
+#
+#       g20_notice:
+#         url: "http://<pc-ip>:48765/api/remote/notice?k=<G20_REMOTE_SECRET>"
+#         method: POST
+#         content_type: "application/json"
+#         payload: '{"title": {{ title | to_json }}, "detail": {{ detail | to_json }}, "status": "ok", "icon": "scene", "hold": 5000}'
+#         timeout: 5
+#
+#     (the PC accepts that request only from the IP in G20_HA_IP, with the secret). The automation, here with an input_select based "mode" like
+#     many setups have; adapt the entities:
+- id: g20_scene_movie_time_toggle
+  alias: G20 remote scene - Movie time (toggle)
+  mode: single
   triggers:
-  - trigger: state
-    entity_id: scene.movie_time
-  conditions:
-  - '{{ trigger.to_state is not none and trigger.to_state.state not in ["unknown", "unavailable"] }}'
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_THE_SAME_LONG_RANDOM_ID
+    allowed_methods: [POST]
+    local_only: true
   actions:
-  - action: rest_command.g20_notice
-    data: {title: Movie time, detail: Scene started}
+  - choose:
+    - conditions:
+      - condition: state
+        entity_id: input_select.my_scenes
+        state: Movie Time
+      sequence:
+      - action: input_select.select_option
+        target: {entity_id: input_select.my_scenes}
+        data: {option: Groundfloor 60%}
+      - action: rest_command.g20_notice
+        data: {title: Movie time, detail: Back to the previous lighting}
+        continue_on_error: true
+    default:
+    - action: input_select.select_option
+      target: {entity_id: input_select.my_scenes}
+      data: {option: Movie Time}
+    - action: rest_command.g20_notice
+      data:
+        title: "{{ trigger.json.scene | default('Movie time') }}"
+        detail: Scene started
+      continue_on_error: true
