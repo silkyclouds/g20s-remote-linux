@@ -336,42 +336,19 @@ def select_source(sid, close=True):
     if close: time.sleep(1.6); kwin(SRC_CLOSE_JS)
 
 
-# ---------- toasts: small borderless windows that never take focus (audio-format checklist bottom-left, scene notices top-right) ----------
+# ---------- toasts: state only. The overlays are drawn by g20-toast (Wayland layer-shell, no focus, transparent), which polls /api/notice and /api/audio ----------
 audio = {"label": "", "detail": "", "verdict": None, "hold": 6000, "checks": []}
 notice = {"title": "", "detail": "", "status": None, "icon": "info", "hold": 5000, "id": 0}
-TOASTS = {"audio": {"page": "audio.html", "state": audio}, "notice": {"page": "notice.html", "state": notice}}
-def _toast_place_js(t):
-    """The pages are 1920x1080 canvases scaled to the window (card position and margins are drawn inside the page), so the toast window covers the
-    whole output: transparent, above everything, no border, out of the switcher/taskbar. The page itself ignores the pointer."""
-    return """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) {
-  const a = workspace.clientArea(KWin.FullScreenArea, w);
-  w.fullScreen = false; w.keepAbove = true; w.skipTaskbar = true; w.skipPager = true; w.skipSwitcher = true; w.noBorder = true;
-  w.frameGeometry = {x: a.x, y: a.y, width: a.width, height: a.height}; } }""" % t["page"]
-def _toast_close_js(t):
-    return "for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) w.closeWindow(); }" % t["page"]
+TOASTS = {"audio": {"state": audio, "clear": "label"}, "notice": {"state": notice, "clear": "title"}}
 _toast_timer = {}
-def toast_window(t):
-    return next((w for w in (kwin(LIST_JS, wait=True) or []) if t["page"] in w["cls"]), None)
 
 def show_toast(kind, info):
     t = TOASTS[kind]; st = t["state"]
     st.update({k: info[k] for k in st if k in info})
     if kind == "notice": st["id"] = int(time.time() * 1000)
     log("toast", kind, "|", {k: st[k] for k in st if k != "checks"})
-    if not os.path.exists(ROOT + "/" + t["page"]): return              # page not installed: the log line above is the proof
     if _toast_timer.get(kind): _toast_timer[kind].cancel()
-    if not toast_window(t):
-        data = kwin(LIST_JS, wait=True) or []
-        prev = next((w for w in reversed(data) if w["active"] and not any(x["page"] in w["cls"] for x in TOASTS.values())), None)
-        subprocess.Popen(browser_command("/" + t["page"], kiosk=False, extra=["--window-size=1280,720"]),
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        for _ in range(40):
-            time.sleep(0.2)
-            if toast_window(t): break
-        kwin(_toast_place_js(t))
-        if prev: kwin(focus_js(prev["id"], close_switcher=False))       # a toast must never take the remote's keys
-    def done():
-        kwin(_toast_close_js(t)); st["title" if kind == "notice" else "label"] = ""
+    def done(): st[t["clear"]] = ""                                   # the overlay disappears when its state is empty
     tm = threading.Timer(st["hold"] / 1000.0 + 1.2, done); tm.daemon = True; tm.start(); _toast_timer[kind] = tm
 
 def show_audio(info): show_toast("audio", info)

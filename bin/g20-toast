@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""g20-toast - draws the designed toast pages (notice.html top-right, audio.html bottom-left) as real Wayland overlays.
+
+Why not a browser window: a browser window takes the keyboard focus (a playing video loses it and pauses), cannot be transparent and covers what is below.
+This uses KDE's layer-shell "overlay" layer (the same mechanism as the desktop's own OSDs): no focus, no pointer input, transparent, above full-screen apps,
+sized to the card only. The pages are 1920x1080 canvases; each overlay is a window onto the right corner of that canvas, so the designed pages stay untouched.
+
+It polls the local g20-switcher-server (/api/notice, /api/audio). A toast is shown while its state has text and removed when the server clears it.
+Needs: PySide6 with QtWebEngineQuick and Plasma's LayerShellQt QML module (both present on Bazzite KDE).
+"""
+import json, os, sys, time, urllib.request
+
+os.environ.setdefault("QT_QPA_PLATFORM", "wayland")
+os.environ["QT_WAYLAND_SHELL_INTEGRATION"] = "layer-shell"        # LayerShellQt: must be set before the application object exists
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--autoplay-policy=no-user-gesture-required --disable-features=Translate")
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtWebEngineQuick import QtWebEngineQuick
+
+BASE = "http://127.0.0.1:%s" % os.environ.get("G20_TOAST_PORT", "48765")
+
+KIND = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("notice", "audio") else "notice"
+# notice: top-right corner of the 1920x1080 canvas; audio: bottom-left. cw/ch = size of the visible corner window (logical px).
+GEOM = {"notice": dict(page="notice.html", api="notice", key="title", cw=660, ch=320, right="true", bottom="false"),
+        "audio": dict(page="audio.html", api="audio", key="label", cw=800, ch=600, right="false", bottom="true")}[KIND]
+
+QML = ("""
+import QtQuick
+import QtQuick.Window
+import QtWebEngine
+import org.kde.layershell 1.0 as LayerShell
+
+Window {
+  id: tw
+  property string lastKey: ""
+  property bool atRight: %(right)s
+  property bool atBottom: %(bottom)s
+  function show(stamp) { v.url = "%(base)s/%(page)s?live&t=" + stamp; visible = true }
+  function hide() { visible = false; v.url = "about:blank" }
+  function poll() {
+    var x = new XMLHttpRequest()
+    x.onreadystatechange = function() {
+      if (x.readyState !== 4 || x.status !== 200) return
+      var d; try { d = JSON.parse(x.responseText) } catch (e) { return }
+      var key = d["%(key)s"] ? JSON.stringify(d) : ""
+      if (key === lastKey) return
+      lastKey = key
+      if (key) show(Date.now()); else hide()
+    }
+    x.open("GET", "%(base)s/api/%(api)s"); x.send()
+  }
+  Timer { interval: 500; running: true; repeat: true; onTriggered: tw.poll() }
+  width: %(cw)d; height: %(ch)d; visible: false; color: "transparent"
+  flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus
+  LayerShell.Window.scope: "g20-toast-%(api)s"
+  LayerShell.Window.layer: LayerShell.Window.LayerOverlay
+  LayerShell.Window.anchors: (atRight ? LayerShell.Window.AnchorRight : LayerShell.Window.AnchorLeft) | (atBottom ? LayerShell.Window.AnchorBottom : LayerShell.Window.AnchorTop)
+  LayerShell.Window.keyboardInteractivity: LayerShell.Window.KeyboardInteractivityNone
+  LayerShell.Window.exclusionZone: -1
+  Item {
+    anchors.fill: parent; clip: true
+    WebEngineView {
+      id: v
+      width: 1920; height: 1080
+      x: tw.atRight ? tw.width - 1920 : 0
+      y: tw.atBottom ? tw.height - 1080 : 0
+      backgroundColor: "transparent"
+      url: "about:blank"
+    }
+  }
+}
+""" % dict(GEOM, base=BASE)).encode()
+
+QtWebEngineQuick.initialize()
+app = QGuiApplication(sys.argv)
+engine = QQmlApplicationEngine()
+engine.loadData(QML, QUrl("g20-toast.qml"))
+roots = engine.rootObjects()
+if not roots: sys.exit("g20-toast: QML failed to load (is the LayerShellQt QML module installed?)")
+print("g20-toast started", flush=True)
+sys.exit(app.exec())

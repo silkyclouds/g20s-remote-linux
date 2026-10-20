@@ -116,7 +116,7 @@ detected **among those only**, so a family can ask for an English title one mome
 `sudo ./bin/g20-setup --only scene` asks you to press the remote button you want, then the name shown in the notice and the Home Assistant webhook (or any shell command) that starts the scene.
 The result is also shown on screen: `Movie time - Scene started`, or in amber `Home Assistant did not answer`. The same notice can be triggered by Home Assistant when the scene is started from a Zigbee button
 or the dashboard (`/api/remote/notice`, secret + IP guarded, see `ha/scene.example.yaml`). Settings: `G20_SCENE_LABEL`, `G20_SCENE_WEBHOOK_URL` or `G20_CMD_SCENE`, `G20_SCENE_ICON` (scene, light, info).
-The notice page (`switcher/notice.html`, designed with Claude Design like the other pages) is a 1920x1080 canvas shown in a transparent window over the whole screen for 5 s; without it the result is only logged (`journalctl --user -u g20d`).
+The notice page (`switcher/notice.html`, designed with Claude Design like the other pages) is drawn by `g20-toast`, a real Wayland overlay (KDE layer-shell, QtWebEngine): transparent, above full-screen apps, never takes the focus or the pointer, so a playing video is not paused; without it the result is only logged (`journalctl --user -u g20d`).
 
 ## Media center: bit-perfect sound and the quality checklist
 
@@ -125,7 +125,7 @@ A PC behind a soundbar or AV receiver can send TrueHD, DTS-HD and Dolby Digital 
 
 ## Requirements
 
-KDE Plasma 6 on **Wayland** (window scripts use KWin), systemd user services, `qdbus`, `curl`, `busctl`, Python 3.11+ with PyGObject (`gi`) and Pillow,
+KDE Plasma 6 on **Wayland** (window scripts use KWin; the toasts need PySide6 with QtWebEngine and Plasma's LayerShellQt, present on Bazzite KDE), systemd user services, `qdbus`, `curl`, `busctl`, Python 3.11+ with PyGObject (`gi`) and Pillow,
 `ydotool`/`ydotoold` and `wl-clipboard` (keyboard / search), Chrome or Chromium (native or Flatpak) for the switcher and keyboard.
 Tested on **Bazzite** (Fedora Atomic) with Plasma 6.7, a 4K TV, Steam Big Picture, Plezy and VacuumTube. Nothing needs `rpm-ostree` layering:
 PipeWire (`pw-dump`, `pw-cli`, `pactl`) for the audio part. Everything lives in `~/.local`, `~/.config` and two files in `/etc/udev`.
