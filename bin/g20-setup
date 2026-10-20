@@ -41,6 +41,7 @@ FUNCTIONS = [
     ("switcher", "APP SWITCHER  (cards of the open windows, e.g. a Pg- or 2 key)", "macro3", True),
     ("prevwin",  "PREVIOUS WINDOW  (like Alt+Tab, e.g. key 1)",     "macro2",       True),
     ("nextwin",  "NEXT WINDOW  (e.g. key 3)",                       "macro4",       True),
+    ("scene",    "SCENE BUTTON  (runs your own Home Assistant scene / command and shows a notice, e.g. \"Movie time\")", "macro6", True),
 ]
 PRESETS = {  # tested mappings: (bus, vendor, product) -> {function: scancode}
     (3, 0x4842, 0x0001): ("JZK G20S Pro Plus (2.4 GHz dongle)", {
@@ -171,6 +172,17 @@ def ask_sources():
         parts.append(sid + (":" + v if v else ""))
     set_conf("G20_SOURCES", ",".join(parts)); print("  saved: " + ",".join(parts))
 
+def ask_scene():
+    """The scene button: a label shown in the notice, and what to run (a Home Assistant webhook or any shell command)."""
+    print("\nSCENE BUTTON - what should it start?  (Enter keeps the value shown in [brackets])")
+    label = ask("  Name shown in the on-screen notice [%s]: " % (get_conf("G20_SCENE_LABEL") or "Movie time"), get_conf("G20_SCENE_LABEL") or "Movie time")
+    set_conf("G20_SCENE_LABEL", label.replace('"', ""))
+    cur = get_conf("G20_SCENE_WEBHOOK_URL") or get_conf("G20_CMD_SCENE")
+    v = ask("  Home Assistant webhook URL of the scene (or a shell command) [%s]: " % (cur or "none yet"), cur)
+    if v.startswith("http"): set_conf("G20_SCENE_WEBHOOK_URL", v)
+    elif v: set_conf("G20_CMD_SCENE", v)
+    print("  saved. Make the webhook trigger the scene (see ha/scene.example.yaml).")
+
 def restart_daemon():
     try:
         uid = pwd.getpwnam(USER).pw_uid
@@ -233,6 +245,8 @@ def main():
     set_conf("G20_DEVICE_IDS", "%04x:%04x" % (group[1], group[2])); set_conf("G20_DEVICE_NAME", name)
     if not YES and ("source" in mapping and (not ONLY or "source" in ONLY)):
         ask_sources()
+    if not YES and ("scene" in mapping and (not ONLY or "scene" in ONLY)):
+        ask_scene()
     if not YES and not ONLY:
         print("\nOptional settings (Enter to keep / skip):")
         url = ask("  Home Assistant webhook URL for TV power, volume and source [%s]: " % ("already set" if get_conf("G20_HA_WEBHOOK_URL") else "none"))

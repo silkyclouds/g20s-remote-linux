@@ -146,7 +146,7 @@ def snapshot():
     for f in glob.glob(RUN + "/thumbs/*"): 
         try: os.remove(f)
         except OSError: pass
-    wins = [w for w in reversed(data) if w["normal"] and not w["skip"] and w["pid"] and w["title"] != TITLE and "keyboard.html" not in w["cls"] and "sources.html" not in w["cls"] and "audio.html" not in w["cls"] and not SKIP_CLASSES.search(w["cls"]) and w["w"] > 300 and w["h"] > 200]
+    wins = [w for w in reversed(data) if w["normal"] and not w["skip"] and w["pid"] and w["title"] != TITLE and "keyboard.html" not in w["cls"] and "sources.html" not in w["cls"] and "audio.html" not in w["cls"] and "notice.html" not in w["cls"] and not SKIP_CLASSES.search(w["cls"]) and w["w"] > 300 and w["h"] > 200]
     items, jobs = [], []
     for w in wins:
         key = w["id"].strip("{}"); name, icon = app_info(w)
@@ -336,47 +336,58 @@ def select_source(sid, close=True):
     if close: time.sleep(1.6); kwin(SRC_CLOSE_JS)
 
 
-# ---------- audio-format toast (shown when a film starts; fed by g20-audio-watch) ----------
+# ---------- toasts: small borderless windows that never take focus (audio-format checklist bottom-left, scene notices top-right) ----------
 audio = {"label": "", "detail": "", "verdict": None, "hold": 6000, "checks": []}
-AUDIO_W, AUDIO_H = 700, 200                                   # logical pixels of the toast window
-AUDIO_PLACE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('audio.html') >= 0) {
+notice = {"title": "", "detail": "", "status": None, "icon": "info", "hold": 5000, "id": 0}
+TOASTS = {"audio": {"page": "audio.html", "w": 700, "h": 200, "corner": "bl", "state": audio},
+          "notice": {"page": "notice.html", "w": 520, "h": 160, "corner": "tr", "state": notice}}
+MARGIN = 40
+def _toast_place_js(t):
+    x = "a.x + %d" % MARGIN if t["corner"] in ("bl", "tl") else "a.x + a.width - %d - %d" % (t["w"], MARGIN)
+    y = "a.y + %d" % MARGIN if t["corner"] in ("tl", "tr") else "a.y + a.height - %d - %d" % (t["h"], MARGIN)
+    return """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) {
   const a = workspace.clientArea(KWin.FullScreenArea, w);
   w.fullScreen = false; w.keepAbove = true; w.skipTaskbar = true; w.skipPager = true; w.skipSwitcher = true; w.noBorder = true;
-  w.frameGeometry = {x: a.x + 40, y: a.y + a.height - %d - 40, width: %d, height: %d}; } }""" % (AUDIO_H, AUDIO_W, AUDIO_H)
-AUDIO_CLOSE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('audio.html') >= 0) w.closeWindow(); }"""
-_audio_timer = {"t": None}
-def audio_window():
-    return next((w for w in (kwin(LIST_JS, wait=True) or []) if "audio.html" in w["cls"]), None)
+  w.frameGeometry = {x: %s, y: %s, width: %d, height: %d}; } }""" % (t["page"], x, y, t["w"], t["h"])
+def _toast_close_js(t):
+    return "for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('%s') >= 0) w.closeWindow(); }" % t["page"]
+_toast_timer = {}
+def toast_window(t):
+    return next((w for w in (kwin(LIST_JS, wait=True) or []) if t["page"] in w["cls"]), None)
 
-def show_audio(info):
-    audio.update({k: info.get(k, audio.get(k)) for k in ("label", "detail", "verdict", "hold", "checks")})
-    log("audio format:", audio["label"], "|", audio["detail"], "|", audio["verdict"])
-    if not os.path.exists(ROOT + "/audio.html"): return                  # no toast page installed: the line above is the proof
-    if _audio_timer["t"]: _audio_timer["t"].cancel()
-    if not audio_window():
+def show_toast(kind, info):
+    t = TOASTS[kind]; st = t["state"]
+    st.update({k: info[k] for k in st if k in info})
+    if kind == "notice": st["id"] = int(time.time() * 1000)
+    log("toast", kind, "|", {k: st[k] for k in st if k != "checks"})
+    if not os.path.exists(ROOT + "/" + t["page"]): return              # page not installed: the log line above is the proof
+    if _toast_timer.get(kind): _toast_timer[kind].cancel()
+    if not toast_window(t):
         data = kwin(LIST_JS, wait=True) or []
-        prev = next((w for w in reversed(data) if w["active"] and "audio.html" not in w["cls"]), None)
-        subprocess.Popen(browser_command("/audio.html", kiosk=False, extra=["--window-size=%d,%d" % (AUDIO_W, AUDIO_H)]),
+        prev = next((w for w in reversed(data) if w["active"] and not any(x["page"] in w["cls"] for x in TOASTS.values())), None)
+        subprocess.Popen(browser_command("/" + t["page"], kiosk=False, extra=["--window-size=%d,%d" % (t["w"], t["h"])]),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         for _ in range(40):
             time.sleep(0.2)
-            if audio_window(): break
-        kwin(AUDIO_PLACE_JS)
-        if prev: kwin(focus_js(prev["id"], close_switcher=False))         # the toast must never take the remote's keys
-    log("audio toast:", audio["label"], "|", audio["detail"])
-    t = threading.Timer(audio["hold"] / 1000.0 + 1.2, lambda: kwin(AUDIO_CLOSE_JS)); t.daemon = True; t.start(); _audio_timer["t"] = t
+            if toast_window(t): break
+        kwin(_toast_place_js(t))
+        if prev: kwin(focus_js(prev["id"], close_switcher=False))       # a toast must never take the remote's keys
+    tm = threading.Timer(st["hold"] / 1000.0 + 1.2, lambda: kwin(_toast_close_js(t))); tm.daemon = True; tm.start(); _toast_timer[kind] = tm
+
+def show_audio(info): show_toast("audio", info)
+def show_notice(info): show_toast("notice", info)
 
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _local_only(self):
-        """Loopback is trusted. From the LAN only ONE request is allowed: POST /api/remote/source_key?k=<G20_REMOTE_SECRET>&cur=<TV input>
-        from the IP in G20_HA_IP (Home Assistant asks the PC to show the input picker when the TV is on the PC's input)."""
+        """Loopback is trusted. From the LAN only THREE requests are allowed: POST /api/remote/{sources_open,source_key,notice}?k=<G20_REMOTE_SECRET>
+        from the IP in G20_HA_IP (Home Assistant asks the PC to show the input picker when the TV is on the PC's input, or to show a scene notice)."""
         ip = self.client_address[0]
         if ip in ("127.0.0.1", "::1"): return True
         from urllib.parse import urlparse, parse_qs
         u = urlparse(self.path); k = parse_qs(u.query).get("k", [""])[0]
-        ok = (self.command == "POST" and u.path in ("/api/remote/sources_open", "/api/remote/source_key") and CONF.get("G20_REMOTE_SECRET") and k == CONF["G20_REMOTE_SECRET"]
+        ok = (self.command == "POST" and u.path in ("/api/remote/sources_open", "/api/remote/source_key", "/api/remote/notice") and CONF.get("G20_REMOTE_SECRET") and k == CONF["G20_REMOTE_SECRET"]
               and ip == CONF.get("G20_HA_IP", ""))
         if not ok: self._send(403)
         return ok
@@ -396,6 +407,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/voice": return self._send(200, json.dumps(voice).encode())
         if p == "/audio.html": return self._file(ROOT + "/audio.html", "text/html; charset=utf-8")
         if p == "/api/audio": return self._send(200, json.dumps(audio).encode())
+        if p == "/notice.html": return self._file(ROOT + "/notice.html", "text/html; charset=utf-8")
+        if p == "/api/notice": return self._send(200, json.dumps(notice).encode())
         if p == "/sources.html": return self._file(ROOT + "/sources.html", "text/html; charset=utf-8")
         if p == "/api/sources": return self._send(200, json.dumps(sources_list()).encode())
         m = re.match(r"/logos/([A-Za-z0-9._-]+)$", p)
@@ -435,6 +448,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/remote/sources_open": threading.Thread(target=toggle_sources, daemon=True).start()
         elif p == "/api/remote/source_key": threading.Thread(target=source_key, args=(q.get("cur", [""])[0],), daemon=True).start()
         elif p == "/api/audio/show": threading.Thread(target=show_audio, args=(body,), daemon=True).start()
+        elif p in ("/api/notice/show", "/api/remote/notice"): threading.Thread(target=show_notice, args=(body,), daemon=True).start()
         elif p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
         elif p == "/api/focus": threading.Thread(target=lambda: kwin(focus_js(body.get("id", ""))), daemon=True).start()
         elif p == "/api/kill": threading.Thread(target=kill_app, args=(body.get("id", ""),), daemon=True).start()

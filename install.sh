@@ -10,7 +10,7 @@ for f in g20d g20-home g20-window g20-micro g20-micro-kwin g20-switcher g20-sour
 install -m 755 "$here/switcher/g20-switcher-server" "$BIN/g20-switcher-server"
 install -m 644 "$here/switcher/index.html" "$SW/index.html"
 mkdir -p "$SW/logos" "$HOME/.config/g20/logos"; cp "$here"/logos/* "$SW/logos/"
-for pg in keyboard.html sources.html audio.html; do [ -f "$here/switcher/$pg" ] && install -m 644 "$here/switcher/$pg" "$SW/$pg"; done
+for pg in keyboard.html sources.html audio.html notice.html; do [ -f "$here/switcher/$pg" ] && install -m 644 "$here/switcher/$pg" "$SW/$pg"; done
 
 # The switcher takes window screenshots through KWin's ScreenShot2, which KWin only allows for programs declared in a .desktop file.
 # We give it a private copy of the Python interpreter so that authorization is not granted to every Python script you run.

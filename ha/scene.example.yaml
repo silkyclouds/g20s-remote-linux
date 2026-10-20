@@ -1,0 +1,40 @@
+# Scene button: the remote's SCENE key (mapped with `sudo g20-setup --only scene`) starts a Home Assistant scene and the PC shows a
+# 5 s notice at the top right of the screen ("Movie time - Scene started", amber if Home Assistant did not answer).
+#
+# 1) ~/.config/g20/g20.conf:
+#      G20_SCENE_LABEL=Movie time
+#      G20_SCENE_WEBHOOK_URL=http://<home-assistant>:8123/api/webhook/<another_long_random_id>
+#
+# 2) Home Assistant, the webhook that starts the scene:
+- id: g20_scene_movie_time
+  alias: G20 remote scene - Movie time
+  mode: single
+  triggers:
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_ANOTHER_LONG_RANDOM_ID
+    allowed_methods: [POST]
+    local_only: true
+  actions:
+  - action: scene.turn_on
+    target: {entity_id: scene.movie_time}
+
+# 3) Optional, the other direction: when the SAME scene is started from anywhere else (a Zigbee button, the dashboard, a voice command),
+#    the PC announces it too. In configuration.yaml:
+#      rest_command:
+#        g20_notice:
+#          url: "http://<pc-ip>:48765/api/remote/notice?k=<G20_REMOTE_SECRET>"
+#          method: POST
+#          content_type: "application/json"
+#          payload: '{"title": "{{ title }}", "detail": "{{ detail }}", "status": "ok", "icon": "scene", "hold": 5000}'
+#    (the PC accepts that one request only from the IP set in G20_HA_IP, with the secret; set G20_REMOTE_SECRET and G20_HA_IP in g20.conf)
+#    and an automation:
+- id: g20_scene_movie_time_notice
+  alias: Tell the PC when Movie time starts
+  triggers:
+  - trigger: state
+    entity_id: scene.movie_time
+  conditions:
+  - '{{ trigger.to_state is not none and trigger.to_state.state not in ["unknown", "unavailable"] }}'
+  actions:
+  - action: rest_command.g20_notice
+    data: {title: Movie time, detail: Scene started}

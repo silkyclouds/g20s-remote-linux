@@ -28,6 +28,7 @@ remote does everything from the sofa.
 * **Search key**: opens a **TV on-screen keyboard** (D-pad or air mouse, letters, numbers, symbols, accents, AZERTY/QWERTY/QWERTZ).
 * **Voice search** if the remote is paired over **Bluetooth**: hold the mic key and speak, in the language(s) you choose (e.g. French and English); the text lands in the keyboard's field.
 * Optional buttons: **app switcher** (a TV-style card view of the open windows with live screenshots; hold OK to kill a frozen app), previous / next window.
+* An optional **scene button**: one press starts a Home Assistant scene (e.g. "Movie time") and a notice slides in at the top right of the screen for 5 seconds (green when it worked, amber if Home Assistant did not answer). Map it with `sudo g20-setup --only scene`; see [ha/scene.example.yaml](ha/scene.example.yaml).
 * A **"maximum quality" checklist** toast when a film starts (is the sound an untouched bitstream, which codec, lossless or not, channels, rate, screen mode), plus `g20-audio-setup` to make PipeWire pass TrueHD / DTS-HD / Dolby Digital to your soundbar. See [docs/media-center.md](docs/media-center.md).
 * Optional **idle power saving** (`g20-eco`): the PC stays awake and ready but uses the minimum when nothing needs it.
 
@@ -68,10 +69,11 @@ You choose which button of **your** remote does each function (the wizard asks);
 | **Source** *(optional)* | `KEY_MACRO5` | **TV input picker** (HDMI 1, 2, 3...): choose with the D-pad, the TV switches through Home Assistant; press again to close |
 | **App switcher** *(optional)* | `KEY_MACRO3` | cards of the open windows, with screenshots; press again to close (or raise it if it is behind); never two |
 | Previous / next window *(optional)* | `KEY_MACRO2` / `KEY_MACRO4` | like Alt+Tab |
+| **Scene** *(optional)* | `KEY_MACRO6` | runs your Home Assistant scene or command, then shows a 5 s notice at the top right (see below) |
 
 `KEY_PROG*` and `KEY_MACRO*` are keys no desktop binds (`F13` would open Quick Settings on KDE), so nothing reacts to them except `g20d`.
 Redo the whole mapping with `sudo bin/g20-setup`, or only some functions with `sudo bin/g20-setup --only source,switcher`
-(the others keep their button). Names of the functions: `up down left right ok back home power volup voldown mute mic play prev next source switcher prevwin nextwin`.
+(the others keep their button). Names of the functions: `up down left right ok back home power volup voldown mute mic play prev next source switcher prevwin nextwin scene`.
 
 For reference, the tested **G20S Pro Plus dongle** preset (scancode → function): OK `0xc0041`, Back `0xc0224`, Home `0xc0223`, Power `0x10081`,
 Vol+ `0xc00e9`, Vol- `0xc00ea`, Mute `0xc00e2`, Mic `0xc00cf`, Play `0xc00cd`, Pg+ `0x7004b` (source), keys 1/2/3 `0x7001e` / `0x7001f` / `0x70020`
@@ -108,6 +110,13 @@ the transcript fills the keyboard's field and you can correct it before searchin
 It uses [ATVVoice](https://github.com/b0o/ATVVoice) (the remote's mic as a PipeWire source) and [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
 (GPU if you have an NVIDIA card, CPU otherwise). **Languages**: set `G20_VOICE_LANGS=fr,en` (first = default); with several languages the spoken language is
 detected **among those only**, so a family can ask for an English title one moment and a French one the next.
+
+## The scene button
+
+`sudo ./bin/g20-setup --only scene` asks you to press the remote button you want, then the name shown in the notice and the Home Assistant webhook (or any shell command) that starts the scene.
+The result is also shown on screen: `Movie time - Scene started`, or in amber `Home Assistant did not answer`. The same notice can be triggered by Home Assistant when the scene is started from a Zigbee button
+or the dashboard (`/api/remote/notice`, secret + IP guarded, see `ha/scene.example.yaml`). Settings: `G20_SCENE_LABEL`, `G20_SCENE_WEBHOOK_URL` or `G20_CMD_SCENE`, `G20_SCENE_ICON` (scene, light, info).
+The notice page (`notice.html`) is designed separately like the other pages; without it the result is only logged (`journalctl --user -u g20d`).
 
 ## Media center: bit-perfect sound and the quality checklist
 
