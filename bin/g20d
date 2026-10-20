@@ -20,6 +20,7 @@ import json, os, select, struct, subprocess, sys, threading, time, urllib.reques
 KEY_PROG1, KEY_PROG2, KEY_PROG3, KEY_PROG4 = 148, 149, 202, 203
 KEY_MACRO1, KEY_MACRO2, KEY_MACRO3, KEY_MACRO4, KEY_MACRO5, KEY_MACRO6 = 656, 657, 658, 659, 660, 661
 KEY_VOICECOMMAND = 582
+KEY_ENTER = 28
 ACTIONS = {KEY_PROG1: "power", KEY_PROG2: "volup", KEY_PROG3: "voldown", KEY_PROG4: "mute"}
 REPEAT = {"volup", "voldown"}
 MIN_GAP = {"power": 0.8, "mute": 0.8, "volup": 0.25, "voldown": 0.25}
@@ -73,6 +74,13 @@ def scene():
             urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:48765/api/notice/show", method="POST", headers={"Content-Type": "application/json"},
                 data=json.dumps({"title": label, "detail": detail, "status": status, "icon": CONF.get("G20_SCENE_ICON", "scene"), "hold": 3000}).encode()), timeout=5)
         except Exception as e: log("notice FAILED", e)
+    threading.Thread(target=go, daemon=True).start()
+
+def ok_pressed():
+    """OK on the remote: the switcher server checks whether it landed on a text field and, if so, shows the on-screen keyboard by itself."""
+    def go():
+        try: urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:48765/api/remote/ok", data=b"{}", method="POST"), timeout=2)
+        except Exception: pass
     threading.Thread(target=go, daemon=True).start()
 
 def pause_media():
@@ -137,6 +145,7 @@ while True:
             elif v == 1 and c == KEY_MACRO4: run("g20-window", "next")
             elif v == 1 and c == KEY_MACRO5: run("g20-source")
             elif v == 1 and c == KEY_VOICECOMMAND: run("g20-micro-kwin")
+            elif v == 1 and c == KEY_ENTER and CONF.get("G20_AUTO_KEYBOARD", "1") != "0": ok_pressed()
             elif v == 1 and c == KEY_MACRO6:
                 now = time.monotonic()
                 if now - last.get("scene", 0) >= 1.5: last["scene"] = now; scene()

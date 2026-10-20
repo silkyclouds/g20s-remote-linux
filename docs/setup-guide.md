@@ -77,6 +77,11 @@ They are small web pages shown full screen by Chrome/Chromium, served only on yo
   Own logos: drop `name.svg` in `~/.config/g20/logos/`. With Home Assistant, set `G20_SOURCE_VIA_HA=1` so the key shows the picker when the TV is on the PC's input
   (`G20_PC_INPUT`, default `hdmi4`) and otherwise cycles the inputs; the HA side is the `source_key` part of the example automation.
 * **Keyboard layout**: `G20_KEYBOARD_LAYOUT=azerty` (qwerty, azerty, qwertz).
+* **The keyboard opens by itself**: press OK on a search field and the on-screen keyboard appears (you do not need the Search key). After each OK press the PC asks the application in front
+  whether a text field has the focus: Wayland applications answer through KDE's text-input protocol, **Steam** through its local debug port (enabled by the file
+  `~/.local/share/Steam/.cef-enable-remote-debugging`), and an Electron or Chromium app started with `--remote-debugging-port=9223` through `G20_CDP_PORTS=youtube:9223`
+  (the part before the colon must appear in the window class). Turn it off with `G20_AUTO_KEYBOARD=0`. Look: `journalctl --user -u g20-switcher | grep "ok pressed"`
+  prints `text field = True steam` (or `kwin`, `cdp:...`) when it detected a field, `False none` when it did not.
 * **Another browser**: `G20_BROWSER="flatpak run com.google.Chrome"` (the URL is added at the end).
 
 ## 5. Voice search
@@ -132,6 +137,7 @@ If Home Assistant does not answer, the notice turns amber: "Home Assistant did n
 | `G20_SOURCES`, `G20_PC_INPUT`, `G20_SOURCE_VIA_HA` | the input picker |
 | `G20_HOME_MATCH`, `G20_HOME_PROC`, `G20_HOME_CMD`, `G20_HOME_FULLSCREEN` | the Home button |
 | `G20_KEYBOARD_LAYOUT` | `qwerty`, `azerty` or `qwertz` |
+| `G20_AUTO_KEYBOARD`, `G20_CDP_PORTS` | the keyboard opening by itself on OK (`0` disables; `app:port` list for Chromium apps with a debug port) |
 | `G20_VOICE_LANGS`, `G20_VOICE_MODEL`, `G20_VOICE_DEVICE`, `G20_VOICE_AUTOSUBMIT` | voice search |
 | `G20_SCENE_LABEL`, `G20_SCENE_WEBHOOK_URL`, `G20_CMD_SCENE`, `G20_SCENE_ICON`, `G20_SCENE_DETAIL`, `G20_SCENE_NOTICE` | the scene button |
 | `G20_AUDIO_POPUP`, `G20_AUDIO_POPUP_APPS`, `G20_AUDIO_POPUP_SECONDS` | the quality checklist |

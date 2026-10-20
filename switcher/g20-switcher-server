@@ -5,7 +5,7 @@ POST /api/toggle (key 2: open / close if in front / raise), /api/focus {id}, /ap
 Windows are listed by a KWin script that calls back this process over D-Bus (org.g20.Switcher); thumbnails come from
 KWin's ScreenShot2.CaptureWindow, so this process must run with ~/.local/libexec/g20/python3, the interpreter copy that
 g20-switcher-shot.desktop authorizes. One switcher at a time, always."""
-import io, json, os, re, signal, subprocess, sys, threading, time, glob
+import io, json, os, re, signal, subprocess, sys, threading, time, glob, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import gi
@@ -262,6 +262,101 @@ def set_voice(body):
         threading.Thread(target=lambda: (time.sleep(1.0), type_text(voice["text"], True)), daemon=True).start()
 
 
+
+# ---------- OK on a text field -> open the on-screen keyboard by itself ----------
+# g20d tells us when OK is pressed on the remote. A moment later we ask the application in front whether a text field has the focus:
+#  - Wayland apps (Plezy, Qt, GTK, Electron with Wayland IME): KWin's VirtualKeyboard.activeClientSupportsTextInput (the text-input protocol),
+#  - Steam (X11, Chromium inside): its local debug port (document.activeElement), enabled by ~/.local/share/Steam/.cef-enable-remote-debugging,
+#  - an Electron / Chromium app started with --remote-debugging-port=N: list N in G20_CDP_PORTS (the active window class must match G20_CDP_APPS).
+def _ws_connect(host, port, path):
+    import socket, base64
+    sk = socket.create_connection((host, port), timeout=3)
+    key = base64.b64encode(os.urandom(16)).decode()
+    sk.sendall(("GET %s HTTP/1.1\r\nHost: %s:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % (path, host, port, key)).encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf: buf += sk.recv(4096)
+    head, rest = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]: raise OSError("websocket handshake refused")
+    return sk, bytearray(rest)
+def _ws_send(sk, text):
+    import struct
+    p = text.encode(); m = os.urandom(4); n = len(p); h = bytearray([0x81])
+    if n < 126: h.append(0x80 | n)
+    elif n < 65536: h += bytes([0x80 | 126]) + struct.pack(">H", n)
+    else: h += bytes([0x80 | 127]) + struct.pack(">Q", n)
+    sk.sendall(bytes(h) + m + bytes(b ^ m[i % 4] for i, b in enumerate(p)))
+def _ws_recv(sk, buf):
+    import struct
+    def need(k):
+        while len(buf) < k:
+            d = sk.recv(65536)
+            if not d: raise OSError("closed")
+            buf.extend(d)
+    out = b""
+    while True:
+        need(2); fin = buf[0] & 0x80; n = buf[1] & 0x7f; i = 2
+        if n == 126: need(4); n = struct.unpack(">H", bytes(buf[2:4]))[0]; i = 4
+        elif n == 127: need(10); n = struct.unpack(">Q", bytes(buf[2:10]))[0]; i = 10
+        need(i + n); out += bytes(buf[i:i + n]); del buf[:i + n]
+        if fin: return out.decode(errors="ignore")
+TEXTFIELD_JS = ("(function(){var a=document.activeElement;for(var i=0;i<6&&a&&a.tagName==='IFRAME'&&a.contentDocument;i++)a=a.contentDocument.activeElement;"
+                "if(!a)return false;var t=(a.tagName||'').toLowerCase();var ty=(a.type||'').toLowerCase();"
+                "return (t==='input'&&['button','checkbox','radio','submit','range','file','image','reset','color'].indexOf(ty)<0)||t==='textarea'||a.isContentEditable===true})()")
+def cdp_text_focus(port, only_title=None):
+    """True if some page behind the Chromium debug port has a text field focused."""
+    pages = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % port, timeout=2))
+    for t in pages:
+        if t.get("type") != "page" or not t.get("webSocketDebuggerUrl"): continue
+        if only_title and only_title not in (t.get("title") or ""): continue
+        try:
+            sk, buf = _ws_connect("127.0.0.1", port, "/" + t["webSocketDebuggerUrl"].split("/", 3)[3])
+            _ws_send(sk, json.dumps({"id": 1, "method": "Runtime.evaluate", "params": {"expression": TEXTFIELD_JS, "returnByValue": True}}))
+            r = json.loads(_ws_recv(sk, buf)); sk.close()
+            if (r.get("result", {}).get("result", {}) or {}).get("value") is True: return True
+        except Exception: continue
+    return False
+
+def active_window():
+    data = kwin(LIST_JS, wait=True) or []
+    return next((w for w in reversed(data) if w["active"]), None)
+
+def kwin_text_input():
+    try:
+        out = subprocess.run(["busctl", "--user", "get-property", "org.kde.KWin", "/VirtualKeyboard", "org.kde.kwin.VirtualKeyboard", "activeClientSupportsTextInput"],
+                             capture_output=True, text=True, timeout=2).stdout
+        return out.strip().endswith("true")
+    except Exception: return False
+
+def text_field_active():
+    """(True, how) when the application in front has a text field focused."""
+    w = active_window()
+    if not w or is_keyboard(w) or is_switcher(w) or is_sources(w): return (False, "ours")
+    cls = (w["cls"] or "").lower()
+    if cls in ("steam", "steamwebhelper"):
+        try:
+            if cdp_text_focus(8080, "Big Picture"): return (True, "steam")
+        except Exception: pass
+    for part in CONF.get("G20_CDP_PORTS", "").split(","):
+        app, _, port = part.partition(":")
+        if app and port.isdigit() and app.lower() in cls:
+            try:
+                if cdp_text_focus(int(port)): return (True, "cdp:" + app)
+            except Exception: pass
+    if kwin_text_input(): return (True, "kwin")
+    return (False, "none")
+
+_ok_lock = threading.Lock()
+def ok_pressed():
+    """The remote's OK was pressed: if it landed on a text field, show the keyboard."""
+    if not _ok_lock.acquire(blocking=False): return
+    try:
+        if CONF.get("G20_AUTO_KEYBOARD", "1") == "0" or keyboard_window(): return
+        time.sleep(0.45)                                    # let the application react to the key first (focus moves into the field)
+        ok, how = text_field_active()
+        log("ok pressed: text field =", ok, how)
+        if ok and not keyboard_window(): open_keyboard()
+    finally: _ok_lock.release()
+
 # ---------- TV input (HDMI source) picker ----------
 STATE_DIR = os.path.expanduser("~/.local/state/g20"); os.makedirs(STATE_DIR, exist_ok=True)
 def is_sources(w): return "sources.html" in w["cls"]
@@ -426,6 +521,7 @@ class H(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]; q = _pq(_up(self.path).query)
         if p == "/api/remote/sources_open": threading.Thread(target=toggle_sources, daemon=True).start()
         elif p == "/api/remote/source_key": threading.Thread(target=source_key, args=(q.get("cur", [""])[0],), daemon=True).start()
+        elif p == "/api/remote/ok": threading.Thread(target=ok_pressed, daemon=True).start()
         elif p == "/api/audio/show": threading.Thread(target=show_audio, args=(body,), daemon=True).start()
         elif p in ("/api/notice/show", "/api/remote/notice"): threading.Thread(target=show_notice, args=(body,), daemon=True).start()
         elif p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
