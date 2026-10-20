@@ -1,0 +1,10 @@
+[Unit]
+Description=ATVVoice - Bluetooth voice remote microphone
+
+[Service]
+ExecStart=%h/.local/bin/atvvoice
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

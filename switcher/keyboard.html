@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+*{box-sizing:border-box}
+a{color:#f2f1ee}a:hover{color:#fff}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:#0a0b0d;color:#f2f1ee;user-select:none;-webkit-user-select:none;
+  font-family:system-ui,"Noto Sans",Cantarell,"Segoe UI",-apple-system,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;--acc:oklch(0.6 0.14 255);--accL:oklch(0.82 0.1 255)}
+#glow{position:absolute;inset:0;background:radial-gradient(70% 55% at 50% 0%,rgba(242,241,238,.06),rgba(242,241,238,0) 70%)}
+@keyframes rise{from{opacity:0;transform:translateY(24px)}}
+header,#field,#kb,footer{animation:rise .45s cubic-bezier(.2,.7,.2,1) both}
+#field{animation-delay:.04s}#kb{animation-delay:.08s}footer{animation-delay:.12s}
+header{position:absolute;top:80px;left:248px;right:248px;display:flex;align-items:baseline;justify-content:space-between}
+h1{margin:0;font-size:46px;font-weight:600;letter-spacing:-.01em}
+#field{position:absolute;left:248px;top:172px;width:1424px;height:112px;border-radius:18px;background:#17191d;border:3px solid rgba(242,241,238,.18);box-shadow:0 16px 40px rgba(0,0,0,.45);display:flex;align-items:center;gap:24px;padding:0 32px 0 40px;transition:border-color .2s ease}
+#field.listen{border-color:var(--acc)}
+#fwin{position:relative;flex:1;min-width:0;height:100%;overflow:hidden}
+#fin{position:absolute;left:0;top:0;height:100%;display:flex;align-items:center;white-space:pre;transition:transform .18s ease}
+#txt{font-size:48px;font-weight:500}
+#caret{flex:none;width:4px;height:58px;margin-left:3px;border-radius:2px;background:#f2f1ee;animation:blink 1.1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+#field.typing #caret{animation:none}
+#field.listen #caret{opacity:0;animation:none}
+#ph{font-size:48px;color:rgba(242,241,238,.38);margin-left:14px}
+#fade{position:absolute;left:0;top:0;bottom:0;width:90px;background:linear-gradient(90deg,#17191d,rgba(23,25,29,0));opacity:0;transition:opacity .2s}
+#fwin.scrolled #fade{opacity:1}
+#vc{flex:none;display:none;align-items:center;gap:16px;font-size:22px;color:rgba(242,241,238,.75);white-space:nowrap}
+#vc.on{display:flex}
+#vc.listening{color:var(--accL);font-weight:600}
+.lv{display:flex;gap:6px;align-items:center;height:36px}
+.lv i{width:6px;height:36px;border-radius:3px;background:var(--accL);animation:lv .9s ease-in-out infinite;transform:scaleY(.25)}
+.lv i:nth-child(2){animation-delay:-.6s}.lv i:nth-child(3){animation-delay:-.3s}.lv i:nth-child(4){animation-delay:-.75s}.lv i:nth-child(5){animation-delay:-.45s}
+@keyframes lv{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}
+.dots{display:flex;gap:8px}
+.dots i{width:10px;height:10px;border-radius:50%;background:#f2f1ee;animation:dt 1.2s ease-in-out infinite;opacity:.25}
+.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+@keyframes dt{40%{opacity:1}}
+#kb{position:absolute;left:248px;top:424px;width:1424px;height:464px}
+.k{position:absolute;height:104px;border-radius:16px;background:#1b1d21;display:flex;align-items:center;justify-content:center;color:#f2f1ee;outline:4px solid transparent;outline-offset:5px;
+  transition:transform .22s cubic-bezier(.2,.7,.2,1),outline-color .18s ease,background-color .18s ease,box-shadow .22s ease;--fs:1.08}
+@keyframes kin{from{opacity:0}}
+#keys .l{animation:kin .2s ease both}
+.k .l{font-size:44px;font-weight:500;line-height:1;pointer-events:none}
+.k.sp{background:#131518}
+.k.sp .l{font-size:24px;font-weight:600;letter-spacing:.02em;color:rgba(242,241,238,.82)}
+.k.s2{--fs:1.05}.k.s4{--fs:1.03}
+.k.f{z-index:2;transform:scale(var(--fs));outline-color:#f2f1ee;background:#2b2e34;box-shadow:0 18px 44px rgba(0,0,0,.6)}
+.k.f .l{color:#fff}
+.k.f.press{transform:scale(1);background:#3a3d44}
+.k.go{background:var(--acc)}.k.go .l{color:#fff}
+.k.go.f{background:oklch(0.66 0.15 255)}
+.k.anchor{outline-color:rgba(242,241,238,.3)}
+.k .dot{position:absolute;top:14px;right:16px;width:7px;height:7px;border-radius:50%;background:rgba(242,241,238,.4)}
+.k .ind{position:absolute;bottom:18px;left:50%;width:30px;height:5px;margin-left:-15px;border-radius:3px;background:rgba(242,241,238,.2);transition:background-color .18s}
+.k.on1 .ind,.k.on2 .ind{background:#f2f1ee}
+.k.on2{background:#2f3238}
+.k.on2 .l{color:#fff}
+.k::after{content:"";position:absolute;left:22px;right:22px;bottom:10px;height:4px;border-radius:2px;background:#f2f1ee;transform:scaleX(var(--p,0));transform-origin:0 50%;opacity:0;transition:opacity .15s}
+.k.hold::after{opacity:1}
+.k.rep{outline-color:oklch(0.68 0.2 25);background:oklch(0.32 0.08 25)}
+.k.rep .l{color:oklch(0.85 0.1 25)}
+#pop{position:absolute;display:none;gap:12px;padding:12px;border-radius:22px;background:#24262b;box-shadow:0 28px 70px rgba(0,0,0,.7);z-index:5;transform-origin:50% 100%;animation:popin .2s cubic-bezier(.2,.7,.2,1)}
+#pop.on{display:flex}
+#pop .k{position:relative;width:104px;background:#30333a}
+#pop .k.f{background:#43474f}
+@keyframes popin{from{opacity:0;transform:translateY(12px) scale(.92)}}
+footer{position:absolute;left:0;right:0;bottom:64px;display:flex;justify-content:center;gap:64px}
+.hint{display:flex;align-items:center;gap:16px;white-space:nowrap;font-size:24px;color:rgba(242,241,238,.85);transition:opacity .2s,color .2s}
+.key{display:flex;align-items:center;gap:8px;height:50px;min-width:62px;padding:0 16px;justify-content:center;border-radius:25px;border:2px solid rgba(242,241,238,.75);font-size:18px;font-weight:700;letter-spacing:.06em}
+.key small{font-size:15px;font-weight:600;letter-spacing:0;opacity:.75}
+#vc .key{height:44px;min-width:0;font-size:16px}
+#stage.holding .hint{opacity:.35}
+#stage.holding #hHold{opacity:1;color:oklch(0.78 0.15 25)}
+#stage.holding #hHold .key{border-color:oklch(0.68 0.2 25)}
+#ptr{position:absolute;left:0;top:0;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:#f2f1ee;border:3px solid #0a0b0d;box-shadow:0 4px 14px rgba(0,0,0,.6);opacity:0;transition:opacity .3s;pointer-events:none;z-index:20}
+#stage.mouse #ptr{opacity:1}
+#veil{position:absolute;inset:0;background:#0a0b0d;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .25s ease;z-index:10}
+#veil.on{opacity:1}
+#toast{position:absolute;left:50%;top:322px;transform:translateX(-50%);padding:14px 26px;border-radius:30px;background:#24262b;font-size:22px;opacity:0;transition:opacity .25s;white-space:nowrap;z-index:6}
+#toast.on{opacity:1}
+#demo{position:absolute;top:40px;right:40px;width:420px;padding:22px;border-radius:18px;background:#1b1d21;box-shadow:0 20px 60px rgba(0,0,0,.6);display:none;cursor:default;z-index:30}
+#demo.on{display:block}
+#demo h3{margin:0 0 12px;font-size:18px;font-weight:600;color:rgba(242,241,238,.6);letter-spacing:.06em;text-transform:uppercase}
+#demo button{display:flex;gap:14px;width:100%;padding:9px 14px;border:0;border-radius:10px;background:transparent;color:#f2f1ee;font:inherit;font-size:22px;text-align:left;cursor:pointer}
+#demo button:hover,#demo button.cur{background:rgba(242,241,238,.1)}
+#demo button b{width:22px;color:rgba(242,241,238,.5);font-weight:600}
+#demo p{margin:12px 0 0;font-size:16px;color:rgba(242,241,238,.5);line-height:1.4}
+#dhint{position:absolute;right:28px;top:24px;font-size:16px;color:rgba(242,241,238,.3);display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="glow"></div>
+  <header><h1 id="label">Search</h1></header>
+  <div id="field">
+    <div id="fwin"><div id="fin"><span id="txt"></span><i id="caret"></i><span id="ph"></span></div><div id="fade"></div></div>
+    <div id="vc"></div>
+  </div>
+  <div id="kb"><div id="keys"></div><div id="pop"></div></div>
+  <footer id="hints"></footer>
+  <div id="toast"></div>
+  <div id="veil"></div>
+  <div id="ptr"></div>
+  <div id="dhint">D · demo</div>
+  <div id="demo"><h3>Demo states</h3><div id="dlist"></div><p>Keys 1–9, 0 and − or click. D hides this panel (in demo mode D does not type). Also via <code>?state=…</code></p></div>
+</div>
+<script>
+(function(){
+const U=104, G=16, KW=1424, HOLD_MS=600;
+const ROWS_L={
+  qwerty:['q w e r t y u i o p {bksp:2}',"a s d f g h j k l ' {clear:2}",'{shift:2} z x c v b n m , . -'],
+  azerty:['a z e r t y u i o p {bksp:2}','q s d f g h j k l m {clear:2}',"{shift:2} w x c v b n ' , . -"],
+  qwertz:['q w e r t z u i o p {bksp:2}','a s d f g h j k l ß {clear:2}','{shift:2} y x c v b n m , . -']
+};
+const BOT_L='{123:2} {layout:2} {space:4} {cancel:2} {search:2}', BOT_S='{abc:2} {layout:2} {space:4} {cancel:2} {search:2}';
+const ROWS_N=['1 2 3 4 5 6 7 8 9 0 {bksp:2}','@ # € & _ - + ( ) / {clear:2}',"{sym:2} . , ? ! ' \" : ; % *"];
+const ROWS_S=['[ ] { } < > ^ ~ | \\ {bksp:2}','= $ £ ¥ ¢ ° § © ® ™ {clear:2}','{num:2} • · … « » ¿ ¡ ± × ÷'];
+const LAYOUTS=['qwerty','azerty','qwertz'];
+const VAR={a:'àâäáãåæ',c:'ç',e:'éèêë',i:'îïíì',n:'ñ',o:'ôöóòõœ',u:'ùûüú',y:'ÿý',"'":'’‘','-':'–—','.':'…','"':'“”«»','?':'¿','!':'¡','€':'$£¥'};
+const STATES=[['empty','Empty field'],['typing','Typing'],['caps','Shift / Caps lock'],['numbers','Numbers'],['symbols','Symbols'],['accents','Accent popup'],['long','Very long text'],['voice','Voice listening'],['voice-result','Voice result'],['mouse','Air-mouse pointer'],['backspace','Backspace held']];
+const DKEYS=['1','2','3','4','5','6','7','8','9','0','-'];
+
+const $=id=>document.getElementById(id);
+const stage=$('stage'), keysEl=$('keys'), pop=$('pop'), field=$('field'), fwin=$('fwin'), fin=$('fin'), txt=$('txt'), vc=$('vc'), ptr=$('ptr');
+const S={layout:'qwerty',qLayout:'qwerty',layer:'letters',shift:'off',text:'',f:0,memX:null,keys:[],pop:null,press:null,mock:false,busy:false,hw:false,
+  voice:{state:'off',text:''},lastVoice:'',fromVoice:false,frozen:false,app:'',label:'Search',scale:1,ox:0,oy:0};
+
+function fit(){
+  const s=Math.min(innerWidth/1920, innerHeight/1080);
+  S.scale=s; S.ox=(innerWidth-1920*s)/2; S.oy=(innerHeight-1080*s)/2;
+  stage.style.transform=`translate(${S.ox}px,${S.oy}px) scale(${s})`;
+}
+addEventListener('resize',fit); fit();
+
+function el(tag,cls,text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+const isLetter=c=>/\p{L}/u.test(c);
+const upc=c=>c==='ß'?c:c.toUpperCase();
+const cased=c=>(S.layer==='letters' && S.shift!=='off' && isLetter(c)) ? upc(c) : c;
+const chars=s=>Array.from(s);
+
+function parse(rows){
+  const out=[];
+  rows.forEach((r,ri)=>{ let c=0; r.split(' ').forEach(tok=>{
+    const m=tok.match(/^\{(\w+):(\d)\}$/);
+    const k=m?{t:m[1],span:+m[2]}:{t:'char',v:tok,span:1};
+    k.r=ri; k.c=c; c+=k.span; k.x=k.c*(U+G); k.w=k.span*U+(k.span-1)*G; k.cx=k.x+k.w/2; out.push(k);
+  }); });
+  return out;
+}
+function label(k){
+  switch(k.t){
+    case 'char': return cased(k.v);
+    case 'bksp': return 'Delete'; case 'clear': return 'Clear';
+    case 'shift': return S.shift==='caps'?'Caps':'Shift';
+    case '123': case 'num': return '123'; case 'abc': return 'ABC'; case 'sym': return '#+=';
+    case 'layout': return S.layout.toUpperCase(); case 'space': return 'Space';
+    case 'cancel': return 'Cancel'; case 'search': return 'Search';
+  }
+  return '';
+}
+function buildKeys(){
+  const rows=S.layer==='letters'?[...ROWS_L[S.layout],BOT_L]:S.layer==='num'?[...ROWS_N,BOT_S]:[...ROWS_S,BOT_S];
+  const prev=S.keys[S.f], row=prev?prev.r:0, x=S.memX!=null?S.memX:(prev?prev.cx:0);
+  S.keys=parse(rows); keysEl.innerHTML='';
+  S.keys.forEach((k,i)=>{
+    const e=el('div','k'+(k.t==='char'?' ch':' sp')+(k.span>=4?' s4':k.span>=2?' s2':'')+(k.t==='search'?' go':''));
+    e.style.left=k.x+'px'; e.style.top=(k.r*(U+G))+'px'; e.style.width=k.w+'px'; e.dataset.i=i;
+    e.append(el('span','l'));
+    if(k.t==='char' && VAR[k.v]) e.append(el('i','dot'));
+    if(k.t==='shift') e.append(el('i','ind'));
+    k.el=e; keysEl.append(e);
+  });
+  refreshLabels();
+  focus(prev?S.keys.indexOf(findAt(row,x)):0);
+}
+function refreshLabels(){
+  S.keys.forEach(k=>{
+    k.el.firstChild.textContent=label(k);
+    if(k.t==='shift'){ k.el.classList.toggle('on1',S.shift==='once'); k.el.classList.toggle('on2',S.shift==='caps'); }
+  });
+  if(S.pop){ S.pop.list=S.pop.base.map(cased); [...pop.children].forEach((e,j)=>e.firstChild.textContent=S.pop.list[j]); }
+}
+function findAt(r,x){
+  const row=S.keys.filter(k=>k.r===r);
+  return row.find(k=>x>=k.x-G/2 && x<=k.x+k.w+G/2) || row.reduce((a,b)=>Math.abs(b.cx-x)<Math.abs(a.cx-x)?b:a);
+}
+function focus(i){
+  if(i<0) i=0;
+  S.f=i; S.keys.forEach((k,j)=>k.el.classList.toggle('f',j===i));
+  updateHints();
+}
+function unfreeze(){
+  if(!S.frozen) return; S.frozen=false;
+  document.querySelectorAll('.k.rep').forEach(e=>e.classList.remove('rep'));
+  stage.classList.remove('holding'); updateHints();
+}
+
+/* hints */
+function hint(pill,text,id){ return `<div class="hint"${id?` id="${id}"`:''}><span class="key">${pill}</span><span>${text}</span></div>`; }
+function updateHints(){
+  let ok='Type', hold=null, back='Cancel';
+  if(S.pop){ ok='Insert'; back='Close'; }
+  else { const k=S.keys[S.f]; if(k) switch(k.t){
+    case 'char': if(VAR[k.v]) hold='Accents'; break;
+    case 'bksp': ok='Delete'; hold='Delete words'; break;
+    case 'shift': ok=S.shift==='caps'?'Caps off':'Shift'; hold='Caps lock'; break;
+    case 'clear': ok='Clear'; break; case 'space': ok='Space'; break;
+    case 'layout': ok='Next layout'; break;
+    case '123': case 'num': ok='Numbers'; break; case 'sym': ok='Symbols'; break; case 'abc': ok='Letters'; break;
+    case 'cancel': ok='Close'; break; case 'search': ok='Search'; break;
+  } }
+  $('hints').innerHTML=hint('OK',ok)+(hold?hint('OK<small>hold</small>',hold,'hHold'):'')+hint('BACK',back);
+}
+function setHoldHint(t){ const h=$('hHold'); if(h) h.lastChild.textContent=t; }
+
+/* field */
+function renderField(typing){
+  txt.textContent=S.text;
+  $('ph').style.display=S.text?'none':'';
+  const shift=Math.max(0, fin.offsetWidth+8-fwin.clientWidth);
+  fin.style.transform=`translateX(${-shift}px)`;
+  fwin.classList.toggle('scrolled',shift>0);
+  if(typing){ field.classList.add('typing'); clearTimeout(renderField.t); renderField.t=setTimeout(()=>field.classList.remove('typing'),700); }
+}
+function renderVoice(){
+  const st=S.voice.state;
+  field.classList.toggle('listen',st==='listening');
+  vc.className='';
+  if(st==='listening'){ vc.className='on listening'; vc.innerHTML='<span class="lv"><i></i><i></i><i></i><i></i><i></i></span><span>Listening…</span>'; }
+  else if(st==='transcribing'){ vc.className='on'; vc.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>Transcribing…</span>'; }
+  else if(S.fromVoice){ vc.className='on'; vc.innerHTML='<span class="key">MIC</span><span>From voice · edit or Search</span>'; }
+  else if(st==='idle'){ vc.className='on'; vc.innerHTML='<span class="key">MIC</span><span>Hold the mic key and speak</span>'; }
+  else vc.innerHTML='';
+}
+function applyVoice(v){
+  v=v||{}; const st=['off','idle','listening','transcribing'].includes(v.state)?v.state:'off', t=typeof v.text==='string'?v.text:'';
+  S.voice={state:st,text:t};
+  if(t && t!==S.lastVoice){ S.text=t; S.fromVoice=true; closePop(); toast('Voice text added'); }
+  S.lastVoice=t;
+  renderVoice(); renderField();
+}
+let fails=0;
+function poll(){
+  if(S.busy) return;
+  fetch('/api/voice',{cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); })
+    .then(v=>{ fails=0; applyVoice(v); })
+    .catch(()=>{ if(++fails===3) applyVoice({state:'off'}); })
+    .finally(()=>setTimeout(poll, fails>=3?5000:400));
+}
+
+/* editing */
+function typeChar(c,fromKey){
+  if(S.busy) return;
+  S.text+=c; S.fromVoice=false;
+  if(fromKey && S.shift==='once'){ S.shift='off'; refreshLabels(); updateHints(); }
+  renderVoice(); renderField(true);
+}
+function del(){ S.text=chars(S.text).slice(0,-1).join(''); S.fromVoice=false; renderVoice(); renderField(true); }
+function delWord(){ S.text=S.text.replace(/\S*\s*$/,''); S.fromVoice=false; renderVoice(); renderField(true); }
+function setLayer(l){ S.layer=l; closePop(); buildKeys(); }
+function flash(k){ k.el.classList.add('press'); setTimeout(()=>k.el.classList.remove('press'),140); }
+
+function act(k){
+  switch(k.t){
+    case 'char': typeChar(cased(k.v),true); break;
+    case 'space': typeChar(' ',true); break;
+    case 'clear': S.text=''; S.fromVoice=false; renderVoice(); renderField(true); break;
+    case '123': case 'num': setLayer('num'); break;
+    case 'sym': setLayer('sym'); break;
+    case 'abc': setLayer('letters'); break;
+    case 'layout': S.layout=LAYOUTS[(LAYOUTS.indexOf(S.layout)+1)%3]; if(S.layer==='letters') buildKeys(); else refreshLabels(); toast(S.layout.toUpperCase()); break;
+    case 'cancel': cancel(); break;
+    case 'search': submit(); break;
+  }
+}
+
+/* press & hold */
+function down(){
+  if(S.busy || S.press) return;
+  unfreeze();
+  const k=S.keys[S.f]; if(!k) return;
+  const p=S.press={k,t0:performance.now(),done:false};
+  flash(k);
+  if((k.t==='char' && VAR[k.v]) || k.t==='shift'){
+    const tick=now=>{
+      if(S.press!==p) return;
+      const el=now-p.t0, v=Math.min(1,el/HOLD_MS);
+      if(el>150) k.el.classList.add('hold');
+      k.el.style.setProperty('--p',v);
+      if(v>=1){ p.done=true; endVisual(k); if(k.t==='shift'){ S.shift='caps'; refreshLabels(); updateHints(); } else openPop(k); }
+      else p.raf=requestAnimationFrame(tick);
+    };
+    p.raf=requestAnimationFrame(tick);
+  } else if(k.t==='bksp'){
+    del();
+    p.rep=setTimeout(()=>{
+      if(S.press!==p) return;
+      p.done=true; k.el.classList.add('rep'); stage.classList.add('holding'); setHoldHint('Deleting letters…');
+      let n=0;
+      const step=()=>{ if(S.press!==p) return; n++;
+        if(n>10){ setHoldHint('Deleting words…'); delWord(); p.rep=setTimeout(step,300); }
+        else { del(); p.rep=setTimeout(step,90); } };
+      step();
+    },450);
+  } else { p.done=true; act(k); }
+}
+function endVisual(k){ k.el.classList.remove('hold','rep'); k.el.style.setProperty('--p',0); }
+function stopPress(){
+  const p=S.press; if(!p) return null; S.press=null;
+  cancelAnimationFrame(p.raf); clearTimeout(p.rep); endVisual(p.k);
+  if(p.k.t==='bksp'){ stage.classList.remove('holding'); updateHints(); }
+  return p;
+}
+function up(){
+  const p=stopPress(); if(!p || p.done) return;
+  if(p.k.t==='char') typeChar(cased(p.k.v),true);
+  else if(p.k.t==='shift'){ S.shift=S.shift==='off'?'once':S.shift==='once'?'caps':'off'; refreshLabels(); updateHints(); }
+}
+
+/* accent popup */
+function openPop(k){
+  const base=[k.v,...chars(VAR[k.v])];
+  S.pop={k,base,list:base.map(cased),i:1};
+  pop.innerHTML='';
+  S.pop.list.forEach((c,j)=>{ const e=el('div','k ch'); e.append(el('span','l',c)); e.dataset.v=j; pop.append(e); });
+  const pw=base.length*U+(base.length-1)*12+24;
+  pop.style.left=Math.max(-40,Math.min(KW-pw+40,k.cx-pw/2))+'px';
+  pop.style.top=(k.r*(U+G)-128-12)+'px';
+  pop.classList.remove('on'); pop.offsetWidth; pop.classList.add('on');
+  k.el.classList.add('anchor'); paintPop(); updateHints();
+}
+function paintPop(){ [...pop.children].forEach((e,j)=>e.classList.toggle('f',j===S.pop.i)); }
+function closePop(){ if(!S.pop) return; S.pop.k.el.classList.remove('anchor'); S.pop=null; pop.classList.remove('on'); updateHints(); }
+function insertPop(){ if(!S.pop) return; const c=S.pop.list[S.pop.i]; closePop(); typeChar(c,true); }
+
+/* navigation */
+function nav(d){
+  unfreeze();
+  if(S.pop){
+    if(d==='l'||d==='r'){ S.pop.i=Math.max(0,Math.min(S.pop.list.length-1,S.pop.i+(d==='l'?-1:1))); paintPop(); }
+    else closePop();
+    return;
+  }
+  const k=S.keys[S.f];
+  if(d==='l'||d==='r'){
+    const row=S.keys.filter(o=>o.r===k.r); let j=row.indexOf(k)+(d==='l'?-1:1);
+    j=(j+row.length)%row.length; S.memX=row[j].cx; focus(S.keys.indexOf(row[j]));
+  } else {
+    const r=k.r+(d==='u'?-1:1); if(r<0||r>3) return;
+    if(S.memX==null) S.memX=k.cx;
+    focus(S.keys.indexOf(findAt(r,S.memX)));
+  }
+}
+
+/* server */
+function post(url,body){ try{ return fetch(url, body===undefined?{method:'POST'}:{method:'POST',body:JSON.stringify(body)}).catch(()=>{}); }catch(e){} }
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(toast.t); toast.t=setTimeout(()=>t.classList.remove('on'),1600); }
+function submit(){
+  if(S.busy) return; S.busy=true; stopPress(); closePop();
+  const v=$('veil'); v.textContent=S.app?`Searching in ${S.app}…`:'Searching…'; v.classList.add('on');
+  post('/api/type',{text:S.text,submit:true});
+  if(S.mock){ const t=S.text; setTimeout(()=>{ v.classList.remove('on'); S.busy=false; toast(`Sent “${t}” (demo)`); },1400); }
+}
+function cancel(){
+  if(S.busy) return; S.busy=true; stopPress(); closePop();
+  post('/api/cancel');
+  if(S.mock){ S.busy=false; toast('Keyboard closed (demo)'); }
+  else { $('veil').textContent=''; $('veil').classList.add('on'); }
+}
+
+/* keyboard input */
+const ARROWS={ArrowLeft:'l',ArrowRight:'r',ArrowUp:'u',ArrowDown:'d'};
+addEventListener('keydown',e=>{
+  const k=e.key, mod=e.ctrlKey||e.metaKey||e.altKey;
+  if(S.mock && !mod){
+    if(k==='d'||k==='D'){ e.preventDefault(); $('demo').classList.toggle('on'); return; }
+    if($('demo').classList.contains('on') && DKEYS.includes(k)){ e.preventDefault(); loadState(STATES[DKEYS.indexOf(k)][0]); return; }
+  }
+  if(S.busy){ e.preventDefault(); return; }
+  if(k==='Enter'){
+    e.preventDefault(); if(e.repeat) return;
+    if(S.pop){ insertPop(); return; }
+    if(S.hw){ submit(); return; }
+    down(); return;
+  }
+  if(ARROWS[k]){ e.preventDefault(); S.hw=false; hideMouse(); stopPress(); nav(ARROWS[k]); return; }
+  if(k==='Escape'||k==='BrowserBack'||k==='GoBack'){ e.preventDefault(); stopPress(); if(S.pop) closePop(); else cancel(); return; }
+  if(k==='Backspace'){ e.preventDefault(); S.hw=true; closePop(); unfreeze(); del(); return; }
+  if(k.length===1 && !mod){ e.preventDefault(); S.hw=true; closePop(); unfreeze(); typeChar(k,false); }
+});
+addEventListener('keyup',e=>{ if(e.key!=='Enter') return; e.preventDefault(); up(); });
+
+/* air mouse */
+function hideMouse(){ stage.classList.remove('mouse'); clearTimeout(S.mt); }
+function placePtr(x,y){ ptr.style.transform=`translate(${x}px,${y}px)`; }
+addEventListener('pointermove',e=>{
+  if(e.pointerType==='touch') return;
+  placePtr((e.clientX-S.ox)/S.scale,(e.clientY-S.oy)/S.scale);
+  const overDemo=e.target.closest&&e.target.closest('#demo');
+  stage.classList.toggle('mouse',!overDemo);
+  S.hw=false; clearTimeout(S.mt); S.mt=setTimeout(hideMouse,3000);
+  if(S.busy||!e.target.closest) return;
+  const pv=e.target.closest('#pop .k');
+  if(pv && S.pop){ S.pop.i=+pv.dataset.v; paintPop(); return; }
+  const ke=e.target.closest('#keys .k');
+  if(ke && !S.press && !S.pop){ const i=+ke.dataset.i; if(i!==S.f){ unfreeze(); S.memX=S.keys[i].cx; focus(i); } }
+});
+addEventListener('pointerdown',e=>{
+  if(S.busy || e.button>0 || (e.target.closest&&e.target.closest('#demo'))) return;
+  const pv=e.target.closest('#pop .k');
+  if(pv && S.pop){ S.pop.i=+pv.dataset.v; insertPop(); return; }
+  if(S.pop){ closePop(); return; }
+  const ke=e.target.closest('#keys .k'); if(!ke) return;
+  const i=+ke.dataset.i; S.memX=S.keys[i].cx; focus(i); down();
+});
+addEventListener('pointerup',()=>up());
+
+/* demo */
+const LONG='The Lord of the Rings: The Fellowship of the Ring extended edition behind the scenes documentary';
+function loadState(name){
+  if(!STATES.some(s=>s[0]===name)) name='empty';
+  document.querySelectorAll('#dlist button').forEach(b=>b.classList.toggle('cur',b.dataset.s===name));
+  stopPress(); closePop(); hideMouse(); S.frozen=true; unfreeze();
+  $('veil').classList.remove('on'); S.busy=false; S.hw=false;
+  S.layout=S.qLayout; S.layer='letters'; S.shift='off'; S.text=''; S.fromVoice=false; S.voice={state:'off',text:''}; S.lastVoice='';
+  S.memX=null; S.keys=[]; S.f=0;
+  if(name==='numbers') S.layer='num';
+  if(name==='symbols') S.layer='sym';
+  if(name==='caps') S.shift='caps';
+  buildKeys();
+  const F=pred=>{ const i=Math.max(0,S.keys.findIndex(pred)); S.memX=S.keys[i].cx; focus(i); return S.keys[i]; };
+  const ch=v=>k=>k.t==='char'&&k.v===v, ty=t=>k=>k.t===t;
+  switch(name){
+    case 'empty': F(()=>true); break;
+    case 'typing': S.text='interview with the'; F(ch('v')); break;
+    case 'caps': S.text='Dragon Ball '; F(ty('shift')); break;
+    case 'numbers': S.text='Blade Runner 2'; F(ch('0')); break;
+    case 'symbols': S.text='Tom & Jerry '; F(ch('[')); break;
+    case 'accents': S.text='Am'; openPop(F(ch('e'))); break;
+    case 'long': S.text=LONG; F(ty('space')); break;
+    case 'voice': S.voice.state='listening'; F(ty('search')); break;
+    case 'voice-result': S.voice.state='idle'; S.text=S.lastVoice='the grand budapest hotel'; S.fromVoice=true; F(ty('search')); break;
+    case 'mouse': { S.text='jelly'; const k=F(ch('f')); placePtr(248+k.cx+22,424+k.r*(U+G)+66); stage.classList.add('mouse'); break; }
+    case 'backspace': { S.text='Interstellar 20'; const k=F(ty('bksp')); k.el.classList.add('rep'); stage.classList.add('holding'); setHoldHint('Deleting words…'); S.frozen=true; break; }
+  }
+  renderVoice(); renderField();
+}
+function enableDemo(){
+  S.mock=true; $('dhint').style.display='block';
+  const l=$('dlist');
+  STATES.forEach(([k,lab],i)=>{ const b=el('button'); b.dataset.s=k; b.append(el('b',null,i===10?'−':(i+1)%10), document.createTextNode(lab)); b.onclick=()=>loadState(k); l.append(b); });
+}
+
+/* init */
+const q=new URLSearchParams(location.search), st=q.get('state');
+const demo=!!st||q.has('demo')||location.protocol==='file:';
+S.app=(q.get('app')||'').trim() || (demo?'Plezy':'');
+S.label=!S.app?'Search':/^search\b/i.test(S.app)?S.app:`Search in ${S.app}`;
+if(/^search\b/i.test(S.app)) S.app='';
+$('label').textContent=S.label; document.title=S.label;
+$('ph').textContent=q.get('placeholder')||'Type to search';
+const ql=(q.get('layout')||'').toLowerCase(); S.qLayout=S.layout=LAYOUTS.includes(ql)?ql:'qwerty';
+const initial=q.get('initial')||'';
+if(demo){
+  enableDemo(); if(q.has('demo')) $('demo').classList.add('on');
+  loadState(st||'empty');
+  if(!st && initial){ S.text=initial; renderField(); }
+} else {
+  buildKeys(); S.text=initial; renderVoice(); renderField(); poll();
+}
+if(document.fonts) document.fonts.ready.then(()=>renderField());
+})();
+</script>
+</body>
+</html>

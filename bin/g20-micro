@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Mic key: open the search of the application in the foreground. $1 = sanitized window class, set by g20-micro-kwin.
-# Add your own apps below. Plezy: Ctrl+F opens its search page (Plezy 1.28+).
+# Mic / search key: open the on-screen keyboard (it also shows voice input when a Bluetooth voice remote is set up).
+# $1 = sanitized class of the window in front, set by g20-micro-kwin.
+# Some apps need their search page opened first: add them below (Plezy: Ctrl+F opens its search page, Plezy 1.28+).
 export YDOTOOL_SOCKET=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.ydotool_socket
 cls=${1:-unknown}
 echo "mic: active window = $cls"
 case "$cls" in
-  *plezy*) ydotool key 29:1 33:1 33:0 29:0 ;;     # Ctrl+F
-  *)       echo "mic: no action for this window" ;;
+  *plezy*) ydotool key 29:1 33:1 33:0 29:0; sleep 0.8 ;;      # Ctrl+F
 esac
+curl -s -m 5 -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:48765/api/keyboard >/dev/null

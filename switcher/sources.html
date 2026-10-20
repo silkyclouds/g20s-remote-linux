@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Select input</title>
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+*{box-sizing:border-box}
+a{color:#f2f1ee}a:hover{color:#fff}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;background:#0a0b0d;color:#f2f1ee;cursor:none;
+  font-family:system-ui,"Noto Sans",Cantarell,"Segoe UI",-apple-system,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+#stage.ptr{cursor:default}
+#stage.ptr .card{cursor:pointer}
+.bg{position:absolute;inset:0;opacity:0;transition:opacity .6s ease}
+.bg.on{opacity:.55}
+#shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,11,13,.72) 0%,rgba(10,11,13,.82) 45%,rgba(10,11,13,.96) 85%,#0a0b0d 100%)}
+header{position:absolute;top:84px;left:120px;right:120px;display:flex;align-items:baseline;justify-content:space-between}
+h1{margin:0;font-size:46px;font-weight:600;letter-spacing:-.01em}
+#tv{display:none;align-items:center;gap:12px;height:52px;padding:0 22px 0 18px;border-radius:26px;background:rgba(242,241,238,.12);font-size:22px;font-weight:600;color:rgba(242,241,238,.85);align-self:center;white-space:nowrap;flex:none}
+#tv.on{display:flex}
+#tv svg{width:26px;height:20px}
+#rail{position:absolute;left:0;right:0;top:250px;height:560px}
+#track{position:absolute;left:0;top:40px;display:flex;align-items:flex-start;gap:48px;transition:transform .45s cubic-bezier(.2,.7,.2,1)}
+.slot{flex:none;width:var(--cw)}
+.card{width:var(--cw);transform-origin:50% 30%;opacity:.5;transition:transform .28s cubic-bezier(.2,.7,.2,1),opacity .28s ease}
+.card.sel{opacity:1;transform:scale(1.1)}
+.thumb{position:relative;width:100%;aspect-ratio:16/9;border-radius:16px;overflow:hidden;background:#17191d;box-shadow:0 16px 40px rgba(0,0,0,.45);outline:4px solid transparent;outline-offset:6px;transition:outline-color .2s ease;display:flex;align-items:center;justify-content:center}
+.card.sel .thumb{outline-color:#f2f1ee;box-shadow:0 28px 70px rgba(0,0,0,.65)}
+.port{width:40%;color:rgba(242,241,238,.82)}
+.logo{position:absolute;left:18%;top:20%;width:64%;height:60%;object-fit:contain;object-position:center;display:block;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))}
+.thumb::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 1px rgba(242,241,238,.06);pointer-events:none}
+.card.sel .port{color:#f2f1ee}
+.badge{position:absolute;top:16px;left:16px;display:flex;align-items:center;gap:10px;padding:7px 15px 7px 12px;border-radius:999px;background:rgba(8,9,11,.82);font-size:18px;font-weight:600;letter-spacing:.02em}
+.badge i{width:10px;height:10px;border-radius:50%;background:oklch(0.8 0.15 150)}
+.meta{margin-top:24px;padding:0 4px}
+.app{font-size:28px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ttl{margin:8px 0 0;font-size:22px;line-height:1.3;color:rgba(242,241,238,.62);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;word-break:break-word}
+.card.sel .ttl{-webkit-line-clamp:2;color:rgba(242,241,238,.75)}
+#track.sm .app{font-size:24px}
+#track.sm .ttl{font-size:19px}
+#track.sm .badge{top:12px;left:12px;font-size:15px;padding:5px 12px 5px 10px;gap:8px}
+#track.sm .badge i{width:8px;height:8px}
+.edge{position:absolute;top:0;height:420px;width:180px;display:flex;align-items:center;opacity:0;transition:opacity .3s ease;pointer-events:none}
+.edge.on{opacity:1}
+#eL{left:0;justify-content:flex-start;padding-left:36px;background:linear-gradient(90deg,rgba(10,11,13,.92),rgba(10,11,13,0))}
+#eR{right:0;justify-content:flex-end;padding-right:36px;background:linear-gradient(270deg,rgba(10,11,13,.92),rgba(10,11,13,0))}
+.edge span{display:flex;align-items:center;gap:8px;height:52px;padding:0 18px;border-radius:26px;background:rgba(242,241,238,.12);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.edge em{font-style:normal;font-size:30px;line-height:1;margin-top:-3px}
+#empty{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:22px}
+#empty h2{margin:0;font-size:44px;font-weight:600}
+#empty p{margin:0;font-size:26px;color:rgba(242,241,238,.6)}
+#stage.isempty #empty{display:flex}
+#stage.isempty #rail,#stage.isempty .needcards{display:none}
+footer{position:absolute;left:0;right:0;bottom:64px;display:flex;justify-content:center;gap:64px}
+.hint{display:flex;align-items:center;gap:16px;font-size:24px;color:rgba(242,241,238,.85);transition:opacity .2s,color .2s}
+.key{display:flex;align-items:center;gap:8px;height:50px;min-width:62px;padding:0 16px;justify-content:center;border-radius:25px;border:2px solid rgba(242,241,238,.75);font-size:18px;font-weight:700;letter-spacing:.06em}
+#stage.err footer .hint{opacity:.35}
+#veil{position:absolute;inset:0;background:#0a0b0d;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .25s ease}
+#veil.on{opacity:1;pointer-events:auto}
+#toast{position:absolute;left:50%;top:180px;transform:translateX(-50%);display:flex;align-items:center;gap:18px;padding:12px 14px 12px 26px;border-radius:38px;background:#24262b;font-size:24px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .25s;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+#toast.on{opacity:1;pointer-events:auto}
+#toast i{width:12px;height:12px;border-radius:50%;background:oklch(0.68 0.2 25);flex:none}
+#toast .hint{font-size:20px;gap:12px;margin-left:12px;color:rgba(242,241,238,.7)}
+#toast .key{height:40px;min-width:52px;font-size:15px;padding:0 12px}
+#toast:not(.sticky) .hint{display:none}
+#toast:not(.sticky){padding:14px 26px}
+#toast:not(.sticky) i{display:none}
+#demo{position:absolute;top:150px;right:120px;width:420px;padding:22px;border-radius:18px;background:#1b1d21;box-shadow:0 20px 60px rgba(0,0,0,.6);display:none;cursor:default}
+#demo.on{display:block}
+#demo h3{margin:0 0 12px;font-size:18px;font-weight:600;color:rgba(242,241,238,.6);letter-spacing:.06em;text-transform:uppercase}
+#demo button{display:flex;gap:14px;width:100%;padding:11px 14px;border:0;border-radius:10px;background:transparent;color:#f2f1ee;font:inherit;font-size:22px;text-align:left;cursor:pointer}
+#demo button:hover,#demo button.cur{background:rgba(242,241,238,.1)}
+#demo button b{width:22px;color:rgba(242,241,238,.5);font-weight:600}
+#demo p{margin:12px 0 0;font-size:16px;color:rgba(242,241,238,.5);line-height:1.4}
+#dhint{position:absolute;right:28px;top:24px;font-size:16px;color:rgba(242,241,238,.3);display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="bg" id="bg0"></div>
+  <div class="bg" id="bg1"></div>
+  <div id="shade"></div>
+  <header><h1>Select input</h1><div id="tv"><svg viewBox="0 0 26 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="1.5" y="1.5" width="23" height="14" rx="2"/><path d="M8 18.5h10" stroke-linecap="round"/></svg><span id="tvn"></span></div></header>
+  <div id="rail">
+    <div id="track"></div>
+    <div class="edge" id="eL"><span><em>‹</em><i id="nL"></i></span></div>
+    <div class="edge" id="eR"><span><i id="nR"></i><em>›</em></span></div>
+  </div>
+  <div id="empty"><h2>No inputs found</h2><p>Press Back to return.</p></div>
+  <footer>
+    <div class="hint needcards"><span class="key">OK</span>Select</div>
+    <div class="hint"><span class="key">BACK</span>Cancel</div>
+  </footer>
+  <div id="veil"></div>
+  <div id="toast"><i></i><span id="tmsg"></span><div class="hint"><span class="key">OK</span>Dismiss</div></div>
+  <div id="dhint">D · demo</div>
+  <div id="demo"><h3>Demo states</h3><div id="dlist"></div><p>Keys 1 to 9, 0 or click. D hides this panel. Also via <code>?state=…</code></p></div>
+</div>
+<script>
+(function(){
+const VW = 1920, GAP = 48, AVAIL = 1680, SWITCH_TIMEOUT = 10000;
+const PORT = '<svg class="port" viewBox="0 0 120 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round"><path d="M5 6h110v28l-16 24H21L5 34z"/><rect x="25" y="22" width="70" height="10" rx="2" fill="currentColor" stroke="none" opacity=".75"/></svg>';
+const svgUri = s => 'data:image/svg+xml,' + encodeURIComponent(s);
+const L = {
+  circle: svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="#f2f1ee"/></svg>'),
+  square: svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="6" y="6" width="88" height="88" rx="22" fill="#2f6fd6"/><rect x="32" y="32" width="36" height="36" rx="8" fill="#fff"/></svg>'),
+  ring: svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="44" fill="#d8352a"/><circle cx="50" cy="50" r="20" fill="none" stroke="#fff" stroke-width="9"/></svg>'),
+  word: svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80"><text x="160" y="54" textLength="290" lengthAdjust="spacingAndGlyphs" text-anchor="middle" font-family="system-ui,sans-serif" font-size="44" font-weight="700" fill="#a88bf0" letter-spacing="1">WORDMARK</text></svg>'),
+  wide: svgUri('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 80"><text x="500" y="56" textLength="960" lengthAdjust="spacingAndGlyphs" text-anchor="middle" font-family="system-ui,sans-serif" font-size="52" font-weight="600" fill="#f2f1ee" letter-spacing="14">VERY WIDE WORDMARK</text></svg>')
+};
+const base = [
+  {id:'hdmi1',name:'HDMI 1',label:'Streaming box'},
+  {id:'hdmi2',name:'HDMI 2',label:'PC',active:true},
+  {id:'hdmi3',name:'HDMI 3',label:'PlayStation'}
+];
+const four = base.concat([{id:'hdmi4',name:'HDMI 4',label:'Nintendo Switch'}]);
+const six = four.concat([{id:'hdmi5',name:'HDMI 5',label:'Blu-ray player'},{id:'hdmi6',name:'HDMI 6',label:'AV receiver (ARC)'}]);
+const MOCK = {
+  normal: base, four: four, six: six,
+  long: [
+    {id:'hdmi1',name:'HDMI 1',label:'Living room streaming box (second generation, 4K HDR, Dolby Vision)'},
+    {id:'hdmi2',name:'HDMI 2',active:true},
+    {id:'hdmi3',name:'HDMI 3',label:''},
+    {id:'hdmi4',label:'PlayStation 5 Pro — Digital Edition — connected through the AV receiver'}
+  ],
+  switching: base, error: base,
+  logos: [
+    {id:'hdmi1',name:'HDMI 1',label:'Streaming box',logo:L.circle},
+    {id:'hdmi2',name:'HDMI 2',label:'PlayStation 5',logo:L.square},
+    {id:'hdmi3',name:'HDMI 3',label:'Nintendo Switch 2',logo:L.ring},
+    {id:'hdmi4',name:'HDMI 4',label:'Bazzite',logo:L.word,active:true}
+  ],
+  mixed: [
+    {id:'hdmi1',name:'HDMI 1',label:'Streaming box',logo:L.circle},
+    {id:'hdmi2',name:'HDMI 2',label:'PC'},
+    {id:'hdmi3',name:'HDMI 3',label:'PlayStation 5',logo:L.square,active:true},
+    {id:'hdmi4',name:'HDMI 4'}
+  ],
+  wide: [
+    {id:'hdmi1',name:'HDMI 1',label:'Living room cinema',logo:L.wide,active:true},
+    {id:'hdmi2',name:'HDMI 2',label:'Bazzite',logo:L.word},
+    {id:'hdmi3',name:'HDMI 3',label:'PlayStation 5',logo:L.square}
+  ],
+  broken: [
+    {id:'hdmi1',name:'HDMI 1',label:'Streaming box',logo:'/logos/missing-streaming-box.svg'},
+    {id:'hdmi2',name:'HDMI 2',label:'Bazzite',logo:L.word,active:true},
+    {id:'hdmi3',name:'HDMI 3',label:'PlayStation 5',logo:'data:image/png;base64,broken'}
+  ]
+};
+const STATES = [['normal','Normal, 3 inputs'],['four','Four inputs'],['six','Six inputs'],['long','Long / missing labels'],['switching','Switching veil'],['error','Error toast'],['logos','Four inputs with logos'],['mixed','Mix with and without logos'],['wide','Very wide logo'],['broken','Missing / broken logo']];
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), track = $('track');
+const S = {items:[], cards:[], sel:0, mock:false, busy:false, bg:0, bgKey:null, cw:440, mouse:false, timer:0};
+
+function fit(){
+  const s = Math.min(innerWidth/1920, innerHeight/1080);
+  stage.style.transform = `translate(${(innerWidth-1920*s)/2}px,${(innerHeight-1080*s)/2}px) scale(${s})`;
+}
+addEventListener('resize', fit); fit();
+
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+function hue(str){ let h=0; for(const c of String(str||'?')) h=(h*31+c.codePointAt(0))>>>0; return h%360; }
+function nameOf(s){ return (s.name && String(s.name).trim()) || ('HDMI ' + s._n); }
+function labelOf(s){ const l=(s.label||'').trim(); return l && l!==nameOf(s) ? l : ''; }
+function hueOf(s){ return s._h != null ? s._h : hue(s.id); }
+function tint(th, s){ const h = hueOf(s); th.style.background = `radial-gradient(120% 90% at 50% 38%, oklch(0.32 0.045 ${h}), oklch(0.17 0.018 ${h}))`; }
+// average hue of the logo's coloured pixels; neutral logos keep the id-derived hue
+function logoHue(img){
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const x = c.getContext('2d'); x.drawImage(img, 0, 0, 16, 16);
+    const d = x.getImageData(0, 0, 16, 16).data; let sx=0, sy=0, w=0;
+    for (let i=0;i<d.length;i+=4){
+      const a=d[i+3]/255; if (a<.5) continue;
+      const r=d[i]/255, g=d[i+1]/255, b=d[i+2]/255, mx=Math.max(r,g,b), mn=Math.min(r,g,b), ch=mx-mn;
+      if (ch<.15) continue;
+      let h = mx===r ? ((g-b)/ch)%6 : mx===g ? (b-r)/ch+2 : (r-g)/ch+4; h*=60;
+      sx+=Math.cos(h*Math.PI/180)*ch; sy+=Math.sin(h*Math.PI/180)*ch; w+=ch;
+    }
+    if (w < 3) return null;
+    return (Math.atan2(sy, sx)*180/Math.PI + 360) % 360;
+  } catch(e){ return null; }
+}
+function fullName(s){ const l=labelOf(s); return nameOf(s) + (l ? ' · ' + l : ''); }
+
+function buildCard(s, i){
+  const slot = el('div','slot'), card = el('div','card'), th = el('div','thumb');
+  tint(th, s);
+  if (s.logo && !s._broken){
+    const im = el('img','logo'); im.alt = ''; im.decoding = 'async';
+    im.onerror = () => { s._broken = true; im.remove(); th.insertAdjacentHTML('afterbegin', PORT); };
+    im.onload = () => { const h = logoHue(im); if (h!=null){ s._h = h; tint(th, s); if (S.items[S.sel]===s){ S.bgKey=null; drawBg(); } } };
+    im.src = s.logo; th.append(im);
+  } else th.innerHTML = PORT;
+  if (s.active){ const b=el('div','badge'); b.append(el('i'), document.createTextNode('Current')); th.append(b); }
+  const meta = el('div','meta'), l = labelOf(s);
+  meta.append(el('div','app', l || nameOf(s)));
+  if (l) meta.append(el('div','ttl',nameOf(s)));
+  card.append(th, meta); slot.append(card);
+  card.addEventListener('mousemove', ()=>{ if (S.mouse && !S.busy && S.sel!==i){ S.sel=i; update(); } });
+  card.addEventListener('click', ()=>{ if (S.busy || stage.classList.contains('err')) return; S.sel=i; update(); select(); });
+  return slot;
+}
+
+function layout(){
+  const n = S.items.length;
+  // largest card that fits the row; below 236px the row scrolls instead
+  const cw = Math.max(236, Math.min(440, Math.floor((AVAIL - (n-1)*GAP)/Math.max(n,1))));
+  S.cw = cw;
+  track.style.setProperty('--cw', cw+'px');
+  track.classList.toggle('sm', cw < 340);
+  const blockH = cw*9/16 + 130;
+  track.style.top = Math.max(40, (560 - blockH)/2 - 20) + 'px';
+}
+function render(){
+  layout();
+  track.innerHTML=''; S.cards = S.items.map(buildCard); S.cards.forEach(c=>track.append(c));
+  track.style.transition='none'; update(); track.offsetWidth; track.style.transition='';
+}
+function offset(){
+  const n = S.items.length, P = S.cw + GAP, total = n*P - GAP;
+  if (total <= AVAIL) return (VW-total)/2;
+  const want = VW/2 - (S.sel*P + S.cw/2);
+  return Math.max(1800-total, Math.min(120, want));
+}
+function update(){
+  const n = S.items.length;
+  stage.classList.toggle('isempty', n===0);
+  S.cards.forEach((c,i)=>c.firstChild.classList.toggle('sel', i===S.sel));
+  if (!n){ $('eL').classList.remove('on'); $('eR').classList.remove('on'); return; }
+  const off = offset(), P = S.cw + GAP;
+  track.style.transform = `translateX(${off}px)`;
+  let l=0, r=0;
+  for (let i=0;i<n;i++){ const x=off+i*P; if (x<40) l++; else if (x+S.cw>VW-40) r++; }
+  $('nL').textContent=l; $('nR').textContent=r;
+  $('eL').classList.toggle('on', l>0); $('eR').classList.toggle('on', r>0);
+  drawBg();
+}
+function drawBg(){
+  const s = S.items[S.sel]; if (!s) return;
+  const h = hueOf(s), key = s.id + ':' + h; if (key===S.bgKey) return; S.bgKey = key;
+  const next = S.bg ? 0 : 1, b = $('bg'+next);
+  b.style.background = `radial-gradient(70% 60% at 50% 42%, oklch(0.36 0.05 ${h}), oklch(0.14 0.02 ${h}) 75%)`;
+  $('bg'+S.bg).classList.remove('on'); b.classList.add('on'); S.bg = next;
+}
+
+function move(d){
+  if (!S.items.length) return;
+  const s = Math.max(0, Math.min(S.items.length-1, S.sel+d));
+  if (s!==S.sel){ S.sel=s; update(); }
+}
+function toast(msg, sticky){
+  const t=$('toast'); $('tmsg').textContent=msg; t.classList.toggle('sticky', !!sticky); t.classList.add('on');
+  stage.classList.toggle('err', !!sticky);
+  clearTimeout(toast.t); if (!sticky) toast.t=setTimeout(()=>t.classList.remove('on'),1600);
+}
+function dismiss(){ $('toast').classList.remove('on'); stage.classList.remove('err'); }
+$('toast').addEventListener('click', dismiss);
+
+function showVeil(s){ $('veil').textContent = `Switching to ${fullName(s)}…`; $('veil').classList.add('on'); S.busy = true; }
+function hideVeil(){ $('veil').classList.remove('on'); S.busy = false; clearTimeout(S.timer); }
+function fail(){ hideVeil(); toast('Could not reach the TV', true); }
+
+function select(){
+  const s = S.items[S.sel]; if (!s || S.busy) return;
+  showVeil(s);
+  if (S.mock){
+    S.timer = setTimeout(()=>{
+      hideVeil();
+      S.items.forEach(x=>x.active = x===s); render();
+      toast(`Switched to ${nameOf(s)} (demo)`);
+    }, 1800);
+    return;
+  }
+  // the server closes the window once the TV has switched
+  S.timer = setTimeout(fail, SWITCH_TIMEOUT);
+  try {
+    fetch('/api/source', {method:'POST', body: JSON.stringify({id: s.id})})
+      .then(r=>{ if (!r.ok) throw 0; })
+      .catch(fail);
+  } catch(e){ fail(); }
+}
+function cancel(){
+  try { fetch('/api/cancel_sources', {method:'POST'}).catch(()=>{}); } catch(e){}
+  if (S.mock) toast('Input picker closed (demo)');
+}
+
+addEventListener('keydown', e=>{
+  const k = e.key;
+  if (S.mock && (k==='d' || k==='D')){ $('demo').classList.toggle('on'); return; }
+  if (S.mock && $('demo').classList.contains('on') && /^[0-9]$/.test(k)){ loadState(STATES[(+k+9)%10][0]); return; }
+  const err = stage.classList.contains('err');
+  if (k==='Enter'){ e.preventDefault(); if (e.repeat) return; if (err) return dismiss(); select(); return; }
+  if (k==='Escape' || k==='Backspace' || k==='BrowserBack'){ e.preventDefault(); if (err) return dismiss(); if (S.busy) return; cancel(); return; }
+  const d = {ArrowLeft:-1, ArrowUp:-1, ArrowRight:1, ArrowDown:1}[k];
+  if (d){ e.preventDefault(); if (S.busy) return; if (err) dismiss(); hidePointer(); move(d); }
+});
+
+let ptrT = 0;
+function hidePointer(){ S.mouse=false; stage.classList.remove('ptr'); clearTimeout(ptrT); }
+addEventListener('mousemove', ()=>{
+  S.mouse = true; stage.classList.add('ptr');
+  clearTimeout(ptrT); ptrT = setTimeout(hidePointer, 3000);
+});
+
+function setItems(list){
+  S.items = (Array.isArray(list)?list:[]).filter(s=>s && s.id!=null).map((s,i)=>({...s, _n: (String(s.id).match(/\d+$/)||[i+1])[0]}));
+  const a = S.items.findIndex(s=>s.active);
+  S.sel = a<0 ? 0 : a; S.bgKey = null; render();
+}
+function loadState(name){
+  if (!MOCK[name]) name='normal';
+  hideVeil(); dismiss();
+  document.querySelectorAll('#dlist button').forEach(b=>b.classList.toggle('cur', b.dataset.s===name));
+  setItems(MOCK[name].map(s=>({...s})));
+  if (name==='switching'){ S.sel = 0; update(); showVeil(S.items[0]); }
+  if (name==='error') toast('Could not reach the TV', true);
+}
+function enableDemo(){
+  S.mock = true; $('dhint').style.display='block';
+  $('tvn').textContent = q.get('tv') || 'Living room TV'; $('tv').classList.add('on');
+  const l = $('dlist');
+  STATES.forEach(([k,label],i)=>{ const b=el('button'); b.dataset.s=k; b.append(el('b',null,(i+1)%10), document.createTextNode(label)); b.onclick=()=>loadState(k); l.append(b); });
+}
+
+const q = new URLSearchParams(location.search), st = q.get('state');
+if (q.get('tv')){ $('tvn').textContent = q.get('tv'); $('tv').classList.add('on'); }
+if (st || q.has('demo')){ enableDemo(); if (q.has('demo')) $('demo').classList.add('on'); loadState(st||'normal'); }
+else {
+  fetch('/api/sources').then(r=>{ if(!r.ok) throw 0; return r.json(); })
+    .then(setItems)
+    .catch(()=>{ enableDemo(); loadState('normal'); });
+}
+})();
+</script>
+</body>
+</html>

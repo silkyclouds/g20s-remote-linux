@@ -1,0 +1,12 @@
+[Unit]
+Description=G20 voice search (speech to text)
+After=atvvoice.service
+
+[Service]
+ExecStart=%h/.local/share/g20-voice/run.sh
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target

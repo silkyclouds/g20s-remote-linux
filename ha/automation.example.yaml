@@ -37,3 +37,8 @@
       - action: media_player.volume_mute
         target: {entity_id: media_player.my_tv}
         data: {is_volume_muted: true}
+    - conditions: '{{ trigger.json.action == "source" }}'
+      sequence:
+      - action: media_player.select_source
+        target: {entity_id: media_player.my_tv}
+        data: {source: '{{ trigger.json.source }}'}

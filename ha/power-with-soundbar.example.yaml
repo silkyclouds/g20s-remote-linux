@@ -1,0 +1,52 @@
+# Power when the PC is plugged into a SOUNDBAR that is plugged into the TV (PC -> soundbar -> TV):
+# the soundbar must be switched on first (it wakes the TV over HDMI-CEC), then the TV input is selected.
+# Put this in its OWN automation with its OWN webhook and set G20_HA_POWER_WEBHOOK_URL in ~/.config/g20/g20.conf:
+# Power is a long sequence that deserves "mode: restart", while volume keys need a fast "queued" automation.
+#
+# Helpers (packages/ or configuration.yaml) remember the wanted state, so "off then on again right away" works
+# even before the TV's power plug / state has caught up (within 25 s we trust the wanted state, afterwards reality):
+#   input_boolean:  { g20_tv_wanted: {name: TV wanted on} }
+#   input_datetime: { g20_tv_last_command: {name: Last power command, has_date: true, has_time: true} }
+- id: g20_power_soundbar_tv
+  alias: G20 Power (soundbar then TV)
+  mode: restart
+  triggers:
+  - trigger: webhook
+    webhook_id: REPLACE_WITH_ANOTHER_LONG_RANDOM_ID
+    allowed_methods: [POST]
+    local_only: true
+  actions:
+  - variables:
+      recent: "{{ (now().timestamp() - (state_attr('input_datetime.g20_tv_last_command', 'timestamp') | float(0))) < 25 }}"
+      was_on: >-
+        {{ is_state('input_boolean.g20_tv_wanted', 'on') if recent
+           else (states('sensor.tv_power_plug') | float(0) > 40) }}
+  - action: input_datetime.set_datetime
+    target: {entity_id: input_datetime.g20_tv_last_command}
+    data: {timestamp: "{{ now().timestamp() }}"}
+  - choose:
+    - conditions: "{{ was_on }}"
+      sequence:
+      - action: input_boolean.turn_off
+        target: {entity_id: input_boolean.g20_tv_wanted}
+      - action: media_player.turn_off
+        target: {entity_id: [media_player.my_tv, media_player.my_soundbar]}
+        continue_on_error: true
+    default:
+    - action: input_boolean.turn_on
+      target: {entity_id: input_boolean.g20_tv_wanted}
+    - parallel:
+      - action: media_player.turn_on
+        target: {entity_id: media_player.my_soundbar}
+        continue_on_error: true
+      - action: media_player.turn_on
+        target: {entity_id: media_player.my_tv}
+        continue_on_error: true
+    - wait_template: "{{ states('sensor.tv_power_plug') | float(0) > 40 }}"
+      timeout: '00:00:40'
+      continue_on_timeout: true
+    - delay: '00:00:04'
+    - action: media_player.select_source        # the TV input the soundbar is plugged into
+      target: {entity_id: media_player.my_tv}
+      data: {source: hdmi4}
+      continue_on_error: true

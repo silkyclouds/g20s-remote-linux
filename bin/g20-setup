@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""g20-setup - setup wizard: teach the system which button of YOUR remote does what. Re-run it any time.
+
+    sudo bin/g20-setup                  map every function, one by one (install.sh runs this for you)
+    sudo bin/g20-setup --only source,switcher     redo only these functions (the others keep their button)
+    bin/g20-setup --sources             only the TV inputs of the source picker (no sudo)
+    options: --yes (accept the tested preset, no questions)  --dry-run (write nothing)  --timeout 30
+
+1. You press any button on the remote: it is identified (2.4 GHz dongle or Bluetooth, any brand).
+2. For each function you press the matching button.  No such button?  Press ESC on your keyboard (in this terminal, or a
+   keyboard plugged into the PC) or wait: it is skipped.  Optional functions are marked.
+   (At every question, Enter accepts the default shown in [brackets].)
+3. It writes the key remap (udev hwdb) and the permission rule for that remote, and fills ~/.config/g20/g20.conf
+   (TV inputs for the source picker, Home Assistant webhook, voice languages).
+Functions are fixed on purpose, so every remote ends up behaving the same way (see README.md)."""
+import fcntl, glob, os, pwd, re, select, struct, subprocess, sys, termios, time, tty
+
+EVIOCGRAB = 0x40044590
+EV_KEY, EV_MSC, MSC_SCAN = 1, 4, 4
+KEY_ESC = 1
+IGNORE = re.compile(r"power button|sleep button|lid switch|video bus|pc speaker|hda |hd-audio|headphone|mic$|sunrise|webcam|wmi|hotkeys", re.I)
+
+# (id, prompt, canonical key name used in the hwdb, optional?)
+FUNCTIONS = [
+    ("up",       "D-pad UP",                                        "up",           False),
+    ("down",     "D-pad DOWN",                                      "down",         False),
+    ("left",     "D-pad LEFT",                                      "left",         False),
+    ("right",    "D-pad RIGHT",                                     "right",        False),
+    ("ok",       "OK / SELECT (centre of the D-pad)",               "enter",        False),
+    ("back",     "BACK",                                            "esc",          False),
+    ("home",     "HOME  (brings your media app to the front)",      "macro1",       False),
+    ("power",    "POWER  (switches the TV on/off)",                 "prog1",        False),
+    ("volup",    "VOLUME +  (TV volume)",                           "prog2",        False),
+    ("voldown",  "VOLUME -  (TV volume)",                           "prog3",        False),
+    ("mute",     "MUTE  (TV)",                                      "prog4",        False),
+    ("mic",      "MIC / SEARCH  (on-screen keyboard, voice if set up)", "voicecommand", True),
+    ("play",     "PLAY / PAUSE",                                    "playpause",    False),
+    ("prev",     "REWIND / PREVIOUS",                               "previoussong", True),
+    ("next",     "FAST-FORWARD / NEXT",                             "nextsong",     True),
+    ("source",   "SOURCE  (opens the TV input picker, e.g. a Pg+ key)", "macro5",   True),
+    ("switcher", "APP SWITCHER  (cards of the open windows, e.g. a Pg- or 2 key)", "macro3", True),
+    ("prevwin",  "PREVIOUS WINDOW  (like Alt+Tab, e.g. key 1)",     "macro2",       True),
+    ("nextwin",  "NEXT WINDOW  (e.g. key 3)",                       "macro4",       True),
+]
+PRESETS = {  # tested mappings: (bus, vendor, product) -> {function: scancode}
+    (3, 0x4842, 0x0001): ("JZK G20S Pro Plus (2.4 GHz dongle)", {
+        "ok": 0xc0041, "back": 0xc0224, "home": 0xc0223, "power": 0x10081, "volup": 0xc00e9, "voldown": 0xc00ea,
+        "mute": 0xc00e2, "mic": 0xc00cf, "play": 0xc00cd, "source": 0x7004b, "switcher": 0x7001f,
+        "prevwin": 0x7001e, "nextwin": 0x70020}),
+}
+HWDB = "/etc/udev/hwdb.d/61-g20-remote.hwdb"
+RULES = "/etc/udev/rules.d/62-g20-remote.rules"
+LEGACY = ["/etc/udev/hwdb.d/61-g20s-remote.hwdb", "/etc/udev/rules.d/62-g20s-remote.rules"]
+
+DRY = "--dry-run" in sys.argv
+YES = "--yes" in sys.argv
+TIMEOUT = float(sys.argv[sys.argv.index("--timeout") + 1]) if "--timeout" in sys.argv else 30.0
+ONLY = set(sys.argv[sys.argv.index("--only") + 1].split(",")) if "--only" in sys.argv else None
+USER = os.environ.get("SUDO_USER") or pwd.getpwuid(os.getuid()).pw_name
+HOME = pwd.getpwnam(USER).pw_dir
+
+def rd(p):
+    try: return open(p).read().strip()
+    except OSError: return ""
+
+def devices():
+    out = {}
+    for n in sorted(glob.glob("/sys/class/input/event*")):
+        base = os.path.join(n, "device"); name = rd(base + "/name")
+        if not name or IGNORE.search(name): continue
+        try: ident = (int(rd(base + "/id/bustype"), 16), int(rd(base + "/id/vendor"), 16), int(rd(base + "/id/product"), 16))
+        except ValueError: continue
+        if not int(rd(base + "/capabilities/ev") or "0", 16) & (1 << EV_KEY): continue
+        out["/dev/input/" + os.path.basename(n)] = (ident, name)
+    return out
+
+def open_all(devs):
+    fds = {}
+    for path in devs:
+        try: fds[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = path
+        except OSError: pass
+    return fds
+
+def events(fds, timeout, tty_skip=False):
+    """Yield (path, type, code, value) from the remote's devices; (None, 'tty', char, 0) when ESC is typed in this terminal."""
+    end = time.time() + timeout
+    watch = list(fds) + ([sys.stdin.fileno()] if tty_skip else [])
+    while time.time() < end:
+        r, _, _ = select.select(watch, [], [], 0.2)
+        for fd in r:
+            if fd == sys.stdin.fileno() and tty_skip:
+                ch = os.read(fd, 8).decode(errors="ignore")
+                if ch.startswith("\x1b") or ch.lower().startswith("s"): yield None, "tty", "esc", 0
+                continue
+            try: b = os.read(fd, 24 * 64)
+            except OSError: continue
+            for i in range(0, len(b) - 23, 24):
+                _, _, t, c, v = struct.unpack("llHHi", b[i:i + 24]); yield fds[fd], t, c, v
+
+def press(fds, devs, group, timeout):
+    """Wait for a key press on the remote: (scancode|None, keycode) ; 'skip' on ESC (any keyboard) ; None on timeout."""
+    scan, old = {}, None
+    interactive = sys.stdin.isatty()
+    if interactive:
+        old = termios.tcgetattr(sys.stdin.fileno()); tty.setcbreak(sys.stdin.fileno())
+    try:
+        for path, t, c, v in events(fds, timeout, interactive):
+            if path is None: return "skip"
+            ident = devs[path][0]
+            if ident != group:
+                if t == EV_KEY and c == KEY_ESC and v == 1: return "skip"
+                continue
+            if t == EV_MSC and c == MSC_SCAN: scan[path] = v & 0xffffffff
+            elif t == EV_KEY and v == 1: return scan.get(path), c
+        return None
+    finally:
+        if old: termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old)
+
+def hwdb_header(ident): return "evdev:input:b%04Xv%04Xp%04X*" % ident
+
+def read_existing(group):
+    """Mapping already installed for this remote: {function: scancode}."""
+    key2fid = {f[2]: f[0] for f in FUNCTIONS}
+    m, ok = {}, False
+    for l in rd(HWDB).splitlines():
+        if l.startswith("evdev:"): ok = (l.strip() == hwdb_header(group))
+        elif ok and l.strip().startswith("KEYBOARD_KEY_"):
+            sc, _, name = l.strip()[len("KEYBOARD_KEY_"):].partition("=")
+            if name in key2fid: m[key2fid[name]] = int(sc, 16)
+    return m
+
+def conf_path(): return os.path.join(HOME, ".config/g20/g20.conf")
+def get_conf(key):
+    for l in rd(conf_path()).splitlines():
+        m = re.match(r"\s*%s=(.*)" % re.escape(key), l)
+        if m: return m.group(1).strip().strip('"')
+    return ""
+def set_conf(key, value):
+    p = conf_path(); os.makedirs(os.path.dirname(p), exist_ok=True)
+    lines = [l for l in rd(p).splitlines() if not re.match(r"\s*#?\s*%s=" % re.escape(key), l)] + ["%s=%s" % (key, value)]
+    if DRY: return
+    open(p, "w").write("\n".join(lines) + "\n"); os.chmod(p, 0o600)
+    u = pwd.getpwnam(USER); os.chown(p, u.pw_uid, u.pw_gid); os.chown(os.path.dirname(p), u.pw_uid, u.pw_gid)
+
+def ask(prompt, default=""):
+    try: v = input(prompt).strip()
+    except EOFError: v = ""
+    return v or default
+
+
+KNOWN_DEVICES = ["PC", "PlayStation 5", "PlayStation 4", "Xbox", "Nintendo Switch", "Nintendo Switch 2", "Apple TV",
+                 "Nvidia Shield", "Raspberry Pi", "Roku", "Steam Deck", "Kodi box", "Bazzite"]
+
+def ask_sources():
+    """TV inputs of the source picker: ids hdmi1..hdmiN (the source names SmartThings/Samsung integrations use) + what is plugged in each."""
+    print("\nTV INPUT PICKER - what is plugged into your TV's HDMI inputs?  (Enter always accepts the default shown in [brackets])")
+    for i, d in enumerate(KNOWN_DEVICES, 1): print("   %2d) %s" % (i, d))
+    print("   or type any name; its logo is picked automatically when it is a known device (own logos: ~/.config/g20/logos, see README)")
+    old = {}
+    for part in get_conf("G20_SOURCES").split(","):
+        bits = part.split(":")
+        if bits[0]: old[bits[0].strip()] = ":".join(bits[1:]).strip()
+    try: n = int(ask("  How many HDMI inputs does the picker show? [%d]: " % (len(old) or 4), str(len(old) or 4)))
+    except ValueError: n = len(old) or 4
+    parts = []
+    for i in range(1, max(1, min(n, 8)) + 1):
+        sid = "hdmi%d" % i; cur = old.get(sid, "")
+        v = ask("  HDMI %d  [%s]: " % (i, cur or "nothing / no label"), cur)
+        if v.isdigit() and 1 <= int(v) <= len(KNOWN_DEVICES): v = KNOWN_DEVICES[int(v) - 1]
+        v = v.replace(",", " ")
+        parts.append(sid + (":" + v if v else ""))
+    set_conf("G20_SOURCES", ",".join(parts)); print("  saved: " + ",".join(parts))
+
+def restart_daemon():
+    try:
+        uid = pwd.getpwnam(USER).pw_uid
+        subprocess.run(["runuser", "-u", USER, "--", "env", "XDG_RUNTIME_DIR=/run/user/%d" % uid, "systemctl", "--user", "restart", "g20d.service"],
+                       timeout=10, capture_output=True)
+    except Exception: pass
+
+def main():
+    if "--sources" in sys.argv: return ask_sources()
+    if os.geteuid() != 0 and not DRY: sys.exit("Run with sudo:  sudo bin/g20-setup")
+    print("\n== G20 remote setup ==\nPut the remote in D-pad mode (air mouse OFF). To skip a button that your remote does not have, press ESC.\n")
+    devs = devices(); fds = open_all(devs)
+    if not fds: sys.exit("No input devices readable.")
+    print("Press ANY button on your remote now (60 s)...")
+    found = None
+    for path, t, c, v in events(fds, 60):
+        if t == EV_KEY and v == 1: found = devs[path]; break
+    if not found: sys.exit("Nothing received. Is the remote on / paired / dongle plugged in?")
+    group, name = found
+    nodes = [p for p, (i, n) in devs.items() if i == group]
+    print("\nRemote detected: %s  [bus %d, %04x:%04x], %d input nodes\n" % (name, group[0], group[1], group[2], len(nodes)))
+    mapping = read_existing(group) if ONLY else {}
+    preset = PRESETS.get(group)
+    if not ONLY and preset and (YES or ask("Known remote: %s. Use the tested mapping? [Y/n] (n = map every button yourself) " % preset[0], "y").lower().startswith("y")):
+        mapping = dict(preset[1])
+    else:
+        grabbed = []
+        for p in nodes:                       # grab the remote so no key does anything while mapping (Power would suspend the PC!)
+            fd = [f for f, q in fds.items() if q == p]
+            if fd:
+                try: fcntl.ioctl(fd[0], EVIOCGRAB, 1); grabbed.append(fd[0])
+                except OSError: pass
+        todo = [f for f in FUNCTIONS if not ONLY or f[0] in ONLY]
+        if ONLY:
+            for fid in ONLY:
+                mapping.pop(fid, None)
+        for n, (fid, prompt, key, optional) in enumerate(todo, 1):
+            while True:
+                print("[%d/%d] Press %s%s ... " % (n, len(todo), prompt, "   (optional)" if optional else ""), end="", flush=True)
+                r = press(fds, devs, group, TIMEOUT)
+                if r == "skip" or r is None: print("skipped" if r == "skip" else "timeout, skipped"); break
+                scan, kc = r
+                if scan is None: print("no scancode for this key (keycode %d), try another button" % kc); continue
+                clash = [k for k, s in mapping.items() if s == scan and k != fid]
+                if clash: print("0x%x is already used for '%s', press a DIFFERENT button" % (scan, clash[0])); continue
+                mapping[fid] = scan; print("got 0x%x" % scan); time.sleep(0.5); break
+        for fd in grabbed:
+            try: fcntl.ioctl(fd, EVIOCGRAB, 0)
+            except OSError: pass
+    keys = {f[0]: f[2] for f in FUNCTIONS}
+    lines = ["# Generated by g20-setup for: %s" % name, hwdb_header(group)] + [" KEYBOARD_KEY_%x=%s" % (mapping[f], keys[f]) for f in keys if f in mapping]
+    rule = 'SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="%04x", ATTRS{id/product}=="%04x", TAG+="uaccess"' % (group[1], group[2])
+    print("\n--- hwdb ---\n" + "\n".join(lines) + "\n--- udev ---\n" + rule)
+    if DRY: print("\n(dry run: nothing written)"); return
+    for old in LEGACY:
+        if os.path.exists(old): os.remove(old); print("removed old file", old)
+    open(HWDB, "w").write("\n".join(lines) + "\n")
+    open(RULES, "w").write("# Let the logged-in user read the remote (g20d is unprivileged and read-only).\n" + rule + "\n")
+    subprocess.run(["systemd-hwdb", "update"]); subprocess.run(["udevadm", "control", "--reload"])
+    set_conf("G20_DEVICE_IDS", "%04x:%04x" % (group[1], group[2])); set_conf("G20_DEVICE_NAME", name)
+    if not YES and ("source" in mapping and (not ONLY or "source" in ONLY)):
+        ask_sources()
+    if not YES and not ONLY:
+        print("\nOptional settings (Enter to keep / skip):")
+        url = ask("  Home Assistant webhook URL for TV power, volume and source [%s]: " % ("already set" if get_conf("G20_HA_WEBHOOK_URL") else "none"))
+        if url: set_conf("G20_HA_WEBHOOK_URL", url)
+        langs = ask("  Voice search languages, first = default (e.g. en or fr,en) [%s]: " % (get_conf("G20_VOICE_LANGS") or "skip if no Bluetooth voice remote"))
+        if langs: set_conf("G20_VOICE_LANGS", langs.replace(" ", ""))
+        lay = ask("  On-screen keyboard layout qwerty / azerty / qwertz [%s]: " % (get_conf("G20_KEYBOARD_LAYOUT") or "qwerty"))
+        if lay: set_conf("G20_KEYBOARD_LAYOUT", lay.lower())
+    restart_daemon()
+    print("\nDone. Now UNPLUG AND REPLUG the dongle (or disconnect/reconnect the Bluetooth remote) so the new mapping loads.")
+
+if __name__ == "__main__":
+    try: main()
+    except KeyboardInterrupt: print("\nAborted.")

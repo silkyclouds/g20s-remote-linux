@@ -7,12 +7,16 @@ Use the MSC_SCAN values in hwdb/61-g20s-remote.hwdb."""
 import fcntl, os, select, struct, sys, time, re, json
 EVIOCGRAB = 0x40044590
 EV_KEY, EV_MSC, EV_REL, EV_ABS = 1, 4, 2, 3
-NAME = os.environ.get("G20_DEVICE_NAME", "HAOBO")
+NAME = os.environ.get("G20_DEVICE_NAME", "HAOBO")        # or G20_DEVICE_IDS=4842:0001
+IDS = [x.lower() for x in os.environ.get("G20_DEVICE_IDS", "").split(",") if x]
 dev = []
 for n in sorted(os.listdir("/sys/class/input")):
     if n.startswith("event"):
         try:
-            if NAME in open(f"/sys/class/input/{n}/device/name").read(): dev.append("/dev/input/" + n)
+            b = f"/sys/class/input/{n}/device"
+            if IDS: ok = ("%s:%s" % (open(b + "/id/vendor").read().strip(), open(b + "/id/product").read().strip())) in IDS
+            else: ok = NAME in open(b + "/name").read()
+            if ok: dev.append("/dev/input/" + n)
         except OSError: pass
 if not dev: sys.exit("Remote not found (is the dongle plugged in?)")
 print("Devices:", ", ".join(dev))

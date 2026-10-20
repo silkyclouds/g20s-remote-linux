@@ -18,10 +18,10 @@ ROOT = os.path.expanduser("~/.local/share/g20-switcher")
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-switcher")
 os.makedirs(RUN + "/thumbs", exist_ok=True); os.makedirs(RUN + "/js", exist_ok=True)
 TITLE = "Open apps"                      # <title> of the Claude Design page = the switcher window
-def browser_command():
+def browser_command(path="/"):
     """Chrome / Chromium in kiosk app mode on the local page. Override with G20_BROWSER="full command" (the URL is appended)."""
     import shutil
-    url = "http://127.0.0.1:%d/" % PORT
+    url = "http://127.0.0.1:%d%s" % (PORT, path)
     flags = ["--app=" + url, "--kiosk", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate",
              "--autoplay-policy=no-user-gesture-required"]
     if os.environ.get("G20_BROWSER"):
@@ -34,7 +34,7 @@ def browser_command():
         if shutil.which("flatpak") and subprocess.run(["flatpak", "info", app], capture_output=True).returncode == 0:
             return ["flatpak", "run", app, "--user-data-dir=%s/.var/app/%s/config/g20-switcher" % (os.path.realpath(home), app)] + flags
     sys.exit("No Chrome/Chromium found: install one or set G20_BROWSER")
-CHROME = browser_command()
+browser_command()          # fail early if no browser is available
 SKIP_CLASSES = re.compile(r"plasmashell|xwaylandvideobridge|krunner|steamwebhelper|ksmserver|kwin", re.I)
 def log(*a): print(*a, flush=True)
 
@@ -146,7 +146,7 @@ def snapshot():
     for f in glob.glob(RUN + "/thumbs/*"): 
         try: os.remove(f)
         except OSError: pass
-    wins = [w for w in reversed(data) if w["normal"] and not w["skip"] and w["pid"] and w["title"] != TITLE and not SKIP_CLASSES.search(w["cls"]) and w["w"] > 300 and w["h"] > 200]
+    wins = [w for w in reversed(data) if w["normal"] and not w["skip"] and w["pid"] and w["title"] != TITLE and "keyboard.html" not in w["cls"] and "sources.html" not in w["cls"] and not SKIP_CLASSES.search(w["cls"]) and w["w"] > 300 and w["h"] > 200]
     items, jobs = [], []
     for w in wins:
         key = w["id"].strip("{}"); name, icon = app_info(w)
@@ -172,7 +172,7 @@ def toggle():
         else: kwin(RAISE_SWITCHER_JS); log("toggle: raised")
         return
     state["ready"].clear(); snapshot()                       # state BEFORE the switcher opens
-    subprocess.Popen(CHROME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    subprocess.Popen(browser_command(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for _ in range(40):                                       # wait for the window, then raise it full screen
         time.sleep(0.25)
         if switcher_state(): kwin(RAISE_SWITCHER_JS); break
@@ -198,6 +198,129 @@ def kill_app(wid):
         subprocess.Popen(["systemd-run", "--user", "--collect", "--unit=g20-steam-relaunch-%d" % int(time.time())] + cmd,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+
+# ---------- configuration, voice state, on-screen keyboard ----------
+def load_conf():
+    conf, p = {}, os.environ.get("G20_CONF") or os.path.expanduser("~/.config/g20/g20.conf")
+    if os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l and not l.startswith("#") and "=" in l:
+                k, v = l.split("=", 1); conf[k.strip()] = v.strip().strip('"')
+    return conf
+CONF = load_conf()
+voice = {"state": "idle" if CONF.get("G20_VOICE_LANGS") else "off", "text": "", "lang": None}
+kbd = {"target": None}                                   # uuid of the window the typed text goes to
+
+def is_switcher(w): return w["title"] == TITLE and re.search("chrome", w["cls"], re.I)
+def is_keyboard(w): return "keyboard.html" in w["cls"]
+def keyboard_window():
+    for w in kwin(LIST_JS, wait=True) or []:
+        if is_keyboard(w): return w
+    return None
+KBD_CLOSE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('keyboard.html') >= 0) w.closeWindow(); }"""
+KBD_RAISE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('keyboard.html') >= 0) { w.minimized = false; w.fullScreen = true; workspace.activeWindow = w; } }"""
+
+def open_keyboard(params=None):
+    """Open the on-screen keyboard (never two). Remembers the window that has the focus: the text goes there."""
+    from urllib.parse import urlencode
+    params = params or {}
+    win = keyboard_window()
+    if win: kwin(KBD_RAISE_JS); log("keyboard: raised"); return
+    data = kwin(LIST_JS, wait=True) or []
+    target = next((w for w in reversed(data) if w["active"] and not is_keyboard(w) and not is_switcher(w)), None) \
+        or next((w for w in reversed(data) if w["normal"] and not w["skip"] and not is_keyboard(w) and not is_switcher(w)), None)
+    kbd["target"] = target["id"] if target else None
+    if not params.get("app") and target: params["app"] = app_info(target)[0] or "Search"
+    params.setdefault("layout", CONF.get("G20_KEYBOARD_LAYOUT", "qwerty"))
+    q = urlencode({k: v for k, v in params.items() if v})
+    subprocess.Popen(browser_command("/keyboard.html?" + q), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(40):
+        time.sleep(0.25)
+        if keyboard_window(): kwin(KBD_RAISE_JS); break
+    log("keyboard: opened for", kbd["target"])
+
+def close_keyboard(refocus=True):
+    kwin(KBD_CLOSE_JS)
+    if refocus and kbd["target"]: kwin(focus_js(kbd["target"], close_switcher=False))
+
+def type_text(text, submit):
+    close_keyboard(); time.sleep(0.5)
+    env = dict(os.environ, WAYLAND_DISPLAY="wayland-0", YDOTOOL_SOCKET=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket"))
+    if text:
+        subprocess.run(["wl-copy", "--", text], env=env, timeout=5)
+        subprocess.run(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"], env=env, timeout=5)        # Ctrl+V
+    if submit:
+        time.sleep(0.3); subprocess.run(["ydotool", "key", "28:1", "28:0"], env=env, timeout=5)         # Enter
+    log("typed %d characters%s" % (len(text), " + Enter" if submit else ""))
+
+def set_voice(body):
+    voice["state"] = body.get("state", voice["state"]); voice["text"] = body.get("text", "") or ""; voice["lang"] = body.get("lang")
+    if voice["state"] in ("listening", "transcribing") and not keyboard_window():
+        threading.Thread(target=open_keyboard, daemon=True).start()
+    if voice["state"] == "idle" and voice["text"] and body.get("submit"):
+        threading.Thread(target=lambda: (time.sleep(1.0), type_text(voice["text"], True)), daemon=True).start()
+
+
+# ---------- TV input (HDMI source) picker ----------
+STATE_DIR = os.path.expanduser("~/.local/state/g20"); os.makedirs(STATE_DIR, exist_ok=True)
+def is_sources(w): return "sources.html" in w["cls"]
+SRC_CLOSE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('sources.html') >= 0) w.closeWindow(); }"""
+SRC_RAISE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass || '').indexOf('sources.html') >= 0) { w.minimized = false; w.fullScreen = true; workspace.activeWindow = w; } }"""
+
+LOGO_HINTS = [("nintendo switch 2", "switch2"), ("switch 2", "switch2"), ("nintendo switch", "nintendoswitch"), ("switch", "nintendoswitch"),
+              ("playstation 5", "playstation5"), ("ps5", "playstation5"), ("playstation 4", "playstation4"), ("ps4", "playstation4"),
+              ("playstation", "playstation"), ("xbox", "xbox"), ("apple tv", "appletv"), ("shield", "nvidia"), ("nvidia", "nvidia"),
+              ("raspberry", "raspberrypi"), ("roku", "roku"), ("steam deck", "steamdeck"), ("steam", "steam"), ("kodi", "kodi"),
+              ("plex", "plex"), ("jellyfin", "jellyfin"), ("bazzite", "bazzite"), ("linux", "linux")]
+LOGO_DIRS = [os.path.expanduser("~/.config/g20/logos"), ROOT + "/logos"]
+def find_logo(name):
+    for d in LOGO_DIRS:
+        for ext in ("svg", "png", "webp", "jpg"):
+            if os.path.exists("%s/%s.%s" % (d, name, ext)): return "/logos/%s.%s" % (name, ext)
+        if os.path.exists("%s/%s" % (d, name)): return "/logos/" + name
+    return None
+
+def sources_list():
+    """G20_SOURCES="hdmi1:Nintendo Switch,hdmi2:PC:mylogo,hdmi3,hdmi4"  -> id:label[:logo]. The logo is a file name (without extension)
+    looked up in ~/.config/g20/logos then in the built-in logos; when omitted it is guessed from the label."""
+    last = open(STATE_DIR + "/source").read().strip() if os.path.exists(STATE_DIR + "/source") else None
+    items = []
+    for part in CONF.get("G20_SOURCES", "hdmi1,hdmi2,hdmi3,hdmi4").split(","):
+        bits = part.strip().split(":")
+        sid, label, logo = bits[0].strip(), (bits[1].strip() if len(bits) > 1 else ""), (bits[2].strip() if len(bits) > 2 else "")
+        if not sid: continue
+        m = re.match(r"(?i)^hdmi\s*(\d+)$", sid)
+        if not logo and label:
+            low = label.lower(); logo = next((n for k, n in LOGO_HINTS if k in low), "")
+        items.append({"id": sid, "name": ("HDMI %s" % m.group(1)) if m else sid, "label": label or None,
+                      "logo": find_logo(logo) if logo else None, "active": sid == last})
+    return items
+
+def toggle_sources():
+    data = kwin(LIST_JS, wait=True) or []
+    win = next((w for w in data if is_sources(w)), None)
+    if win:
+        kwin(SRC_CLOSE_JS if win["active"] else SRC_RAISE_JS); return
+    subprocess.Popen(browser_command("/sources.html"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(40):
+        time.sleep(0.25)
+        if any(is_sources(w) for w in (kwin(LIST_JS, wait=True) or [])): kwin(SRC_RAISE_JS); break
+
+def select_source(sid):
+    open(STATE_DIR + "/source", "w").write(sid)
+    cmd = CONF.get("G20_CMD_SOURCE")
+    try:
+        if cmd: subprocess.run(cmd, shell=True, timeout=10, env=dict(os.environ, G20_SOURCE=sid))
+        elif CONF.get("G20_HA_WEBHOOK_URL"):
+            import urllib.request
+            r = urllib.request.Request(CONF["G20_HA_WEBHOOK_URL"], data=json.dumps({"action": "source", "source": sid}).encode(),
+                                       headers={"Content-Type": "application/json"}, method="POST")
+            log("source", sid, urllib.request.urlopen(r, timeout=8).status)
+        else: log("source", sid, "no backend configured")
+    except Exception as e: log("source", sid, "FAILED", e)
+    time.sleep(1.6); kwin(SRC_CLOSE_JS)
+
 # ---------- HTTP ----------
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -211,6 +334,16 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path.split("?")[0]
         if p in ("/", "/index.html"): return self._file(ROOT + "/index.html", "text/html; charset=utf-8")
+        if p == "/keyboard.html": return self._file(ROOT + "/keyboard.html", "text/html; charset=utf-8")
+        if p == "/api/voice": return self._send(200, json.dumps(voice).encode())
+        if p == "/sources.html": return self._file(ROOT + "/sources.html", "text/html; charset=utf-8")
+        if p == "/api/sources": return self._send(200, json.dumps(sources_list()).encode())
+        m = re.match(r"/logos/([A-Za-z0-9._-]+)$", p)
+        if m:
+            for d in LOGO_DIRS:
+                f = os.path.join(d, m.group(1))
+                if os.path.isfile(f): return self._file(f, {"svg": "image/svg+xml", "png": "image/png", "webp": "image/webp", "jpg": "image/jpeg"}.get(f.rsplit(".", 1)[-1], "application/octet-stream"))
+            return self._send(404)
         if p.startswith("/echantillons/"): return self._file(ROOT + p, "image/jpeg")
         if p == "/api/windows":
             if not state["ready"].is_set(): snapshot()
@@ -240,6 +373,13 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/toggle": threading.Thread(target=toggle, daemon=True).start()
         elif p == "/api/focus": threading.Thread(target=lambda: kwin(focus_js(body.get("id", ""))), daemon=True).start()
         elif p == "/api/kill": threading.Thread(target=kill_app, args=(body.get("id", ""),), daemon=True).start()
+        elif p == "/api/keyboard": threading.Thread(target=open_keyboard, args=(body,), daemon=True).start()
+        elif p == "/api/type": threading.Thread(target=type_text, args=(body.get("text", ""), bool(body.get("submit", True))), daemon=True).start()
+        elif p == "/api/cancel": threading.Thread(target=close_keyboard, daemon=True).start()
+        elif p == "/api/voice/set": set_voice(body)
+        elif p == "/api/sources/open": threading.Thread(target=toggle_sources, daemon=True).start()
+        elif p == "/api/source": threading.Thread(target=select_source, args=(body.get("id", ""),), daemon=True).start()
+        elif p == "/api/cancel_sources": threading.Thread(target=lambda: kwin(SRC_CLOSE_JS), daemon=True).start()
         elif p == "/api/close": threading.Thread(target=lambda: kwin(CLOSE_SWITCHER_JS), daemon=True).start()
         else: return self._send(404)
         self._send(200, b"{}")

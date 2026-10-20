@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""g20-voice - voice search for Bluetooth voice remotes (ATVV), in the languages you choose.
+
+Pipeline:  remote mic (BLE ATVV) -> atvvoice (PipeWire virtual microphone + D-Bus state) -> this daemon -> faster-whisper -> text
+The text is handed to the keyboard overlay of g20-switcher-server (POST /api/voice/set), where it fills the search field.
+
+While the mic key is held, atvvoice's D-Bus state is "streaming": we record the PipeWire source and, on release, transcribe.
+Language: with several languages in G20_VOICE_LANGS the spoken language is detected among those only (e.g. "fr,en"), so a
+French household can still ask for an English title; the first language is the default when detection is unsure.
+
+Configuration (~/.config/g20/g20.conf):
+  G20_VOICE_LANGS=fr,en      languages (ISO 639-1), first = default
+  G20_VOICE_MODEL=small      faster-whisper model: tiny, base, small, medium, large-v3 ...
+  G20_VOICE_DEVICE=auto      auto | cuda | cpu
+  G20_VOICE_AUTOSUBMIT=0     1 = submit the search as soon as the text is ready
+Test without a remote:  g20-voice --file recording.wav
+"""
+import json, os, subprocess, sys, threading, time, urllib.request, wave
+SERVER = "http://127.0.0.1:48765"
+RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-voice"); os.makedirs(RUN, exist_ok=True)
+
+def log(*a): print(*a, flush=True)
+
+def load_conf():
+    conf, p = {}, os.environ.get("G20_CONF") or os.path.expanduser("~/.config/g20/g20.conf")
+    if os.path.exists(p):
+        for l in open(p):
+            l = l.strip()
+            if l and not l.startswith("#") and "=" in l:
+                k, v = l.split("=", 1); conf[k.strip()] = v.strip().strip('"')
+    return conf
+CONF = load_conf()
+LANGS = [x.strip().lower() for x in CONF.get("G20_VOICE_LANGS", "en").split(",") if x.strip()]
+MODEL_NAME = CONF.get("G20_VOICE_MODEL", "small")
+DEVICE = CONF.get("G20_VOICE_DEVICE", "auto")
+AUTOSUBMIT = CONF.get("G20_VOICE_AUTOSUBMIT", "0") == "1"
+
+_model = None
+def model():
+    global _model
+    if _model is None:
+        from faster_whisper import WhisperModel
+        dev = DEVICE
+        if dev == "auto":
+            try:
+                import ctranslate2; dev = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            except Exception: dev = "cpu"
+        compute = "float16" if dev == "cuda" else "int8"
+        log("loading model", MODEL_NAME, dev, compute)
+        try: _model = WhisperModel(MODEL_NAME, device=dev, compute_type=compute)
+        except Exception as e:
+            log("GPU load failed, falling back to CPU:", e); _model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+    return _model
+
+def transcribe(path):
+    """Returns (language, text)."""
+    from faster_whisper.audio import decode_audio
+    audio = decode_audio(path, sampling_rate=16000)
+    if len(audio) < 16000 * 0.4: return None, ""
+    m = model(); lang = LANGS[0]
+    if len(LANGS) > 1:
+        try:
+            _, _, probs = m.detect_language(audio)
+            allowed = [(p, l) for l, p in probs if l in LANGS]
+            if allowed: lang = max(allowed)[1]
+        except Exception as e: log("language detection failed:", e)
+    segs, info = m.transcribe(audio, language=lang, beam_size=5, vad_filter=True, condition_on_previous_text=False)
+    return lang, " ".join(s.text.strip() for s in segs).strip()
+
+def post(path, body):
+    try:
+        r = urllib.request.Request(SERVER + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(r, timeout=5)
+    except Exception as e: log("server unreachable:", e)
+
+# ---------- atvvoice (D-Bus) ----------
+def run_daemon():
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    state = {"rec": None, "name": None}
+
+    def start_recording(node):
+        path = os.path.join(RUN, "rec.wav")
+        cmd = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16"] + (["--target", node] if node else []) + [path]
+        state["rec"] = (subprocess.Popen(cmd, stderr=subprocess.DEVNULL), path)
+        post("/api/voice/set", {"state": "listening", "text": ""}); log("listening")
+
+    def stop_and_transcribe():
+        rec = state["rec"]; state["rec"] = None
+        if not rec: return
+        proc, path = rec; proc.terminate(); proc.wait(timeout=3)
+        post("/api/voice/set", {"state": "transcribing", "text": ""})
+        def work():
+            try:
+                lang, text = transcribe(path); log("heard (%s): %s" % (lang, text))
+                post("/api/voice/set", {"state": "idle", "text": text, "lang": lang, "submit": bool(text) and AUTOSUBMIT})
+            except Exception as e:
+                log("transcription failed:", e); post("/api/voice/set", {"state": "idle", "text": ""})
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_signal(conn, sender, path, iface, signal, params, *_):
+        new = params.unpack()[0]; log("atvvoice state:", new)
+        if new == "streaming" and not state["rec"]: start_recording(node_name(conn, sender))
+        elif new != "streaming" and state["rec"]: stop_and_transcribe()
+
+    def node_name(conn, bus_name):
+        try:
+            r = conn.call_sync(bus_name, "/org/atvvoice/Daemon", "org.freedesktop.DBus.Properties", "Get",
+                               GLib.Variant("(ss)", ("org.atvvoice.Daemon", "NodeName")), None, Gio.DBusCallFlags.NONE, 2000, None)
+            return r.unpack()[0]
+        except Exception: return None
+
+    subscribed = set()
+    def scan():
+        names = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames", None, None,
+                              Gio.DBusCallFlags.NONE, 2000, None).unpack()[0]
+        for n in names:
+            if n.startswith("org.atvvoice.") and n not in subscribed:
+                subscribed.add(n); log("found", n)
+                bus.signal_subscribe(n, "org.atvvoice.Daemon", "MicStateChanged", "/org/atvvoice/Daemon", None, Gio.DBusSignalFlags.NONE, on_signal)
+        return True
+    scan(); GLib.timeout_add_seconds(3, scan)
+    threading.Thread(target=model, daemon=True).start()          # warm the model while idle
+    log("g20-voice ready; languages:", LANGS, "model:", MODEL_NAME)
+    GLib.MainLoop().run()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--file":
+        t0 = time.time(); lang, text = transcribe(sys.argv[2]); print(json.dumps({"language": lang, "text": text, "seconds": round(time.time() - t0, 2)}, ensure_ascii=False))
+    else: run_daemon()
