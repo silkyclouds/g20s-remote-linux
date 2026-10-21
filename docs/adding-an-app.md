@@ -60,7 +60,8 @@ After you speak, `type_text()` in `switcher/g20-switcher-server` puts the words 
 1. **Steam**: the page "Steam Big Picture" is reached through port 8080. Its search box (`input[type=search]`) is focused, selected, filled with the words, and Enter is sent.
 2. **An app in `G20_CDP_PORTS`**: the words are inserted through the Chrome DevTools Protocol (`Input.insertText`), replacing the field's content, then Enter.
    If the app needs more than a focused field (a search page to open, a route to visit), add it in `cdp_target()`: it returns the port, a page title filter and a JavaScript expression that prepares the field.
-3. **Any other app**: Ctrl+A then Ctrl+V into the field that has the focus, then Enter. Nothing is typed when no text field has the focus, so a voice search can never press Enter on a poster.
+3. **An app with its own voice search** (`G20_NATIVE_VOICE_APPS`): nothing is typed and no keyboard opens. The Mic key reaches the app's search page and presses its microphone button (`yttv_native_voice()` for YouTube for TV).
+4. **Any other app**: Ctrl+A then Ctrl+V into the field that has the focus, then Enter. Nothing is typed when no text field has the focus, so a voice search can never press Enter on a poster.
 
 To try your app end to end without the remote: `curl -X POST http://127.0.0.1:48765/api/voice/start`, speak, and watch `journalctl --user -u g20-switcher -f`.
 

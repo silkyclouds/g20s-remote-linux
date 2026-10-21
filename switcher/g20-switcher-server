@@ -227,6 +227,14 @@ def open_keyboard(params=None):
     from urllib.parse import urlencode
     params = dict(params or {})
     listen = params.pop("voice", False)               # the remote's mic key: show the keyboard already listening
+    if listen and not keyboard_window():
+        front = active_window()
+        cls = ((front["cls"] or "") if front else "").lower()
+        port = cdp_port_of(cls)
+        if native_voice_app(cls) and port:                 # the app has its own voice search: no keyboard, use it
+            try: log("native voice search in %s ->" % cls, yttv_native_voice(port))
+            except Exception as e: log("native voice search failed in %s:" % cls, e)
+            return
     win = keyboard_window()
     if win:
         kwin(KBD_RAISE_JS); log("keyboard: raised")
@@ -260,8 +268,11 @@ def type_text(text, submit):
     if target:
         port, title, prepare = target
         try:
+            if prepare is None and not cdp_text_focus(port, title):
+                log("no text field has the focus in %s: nothing typed" % cls); return      # Enter on a poster would start a video
             if cdp_type(port, text, submit, title, prepare): log("typed %d characters through the debug port of %s" % (len(text), cls)); return
         except Exception as e: log("debug port typing failed:", e)
+        log("debug port typing did not work for %s: nothing typed" % cls); return
     if text and not (cls.startswith("plezy") or text_field_active()[0]):
         # Pasting and pressing Enter with nothing to type into would act on whatever has the focus (it can start a video).
         log("no text field has the focus in %s: nothing typed" % (cls or "the window in front")); return
@@ -384,11 +395,73 @@ STEAM_SEARCH_JS = "(function(){var e=document.querySelector('input[type=search]'
 
 def cdp_target(cls):
     """(port, page title filter, preparation script) of the application whose class is `cls`, or None."""
+    if native_voice_app(cls): return None
     if cls in ("steam", "steamwebhelper"): return (8080, "Big Picture", STEAM_SEARCH_JS)
     for part in CONF.get("G20_CDP_PORTS", "").split(","):
         app, _, port = part.partition(":")
         if app and port.isdigit() and app.lower() in cls: return (int(port), None, None)
     return None
+
+
+# ---------- apps that have their own voice search (YouTube for TV in VacuumTube) ----------
+def native_voice_app(cls):
+    """The app of G20_NATIVE_VOICE_APPS (default: vacuumtube) whose window class is `cls`, or None. Such an app listens and types by itself."""
+    for app in CONF.get("G20_NATIVE_VOICE_APPS", "vacuumtube").split(","):
+        if app.strip() and app.strip().lower() in cls: return app.strip().lower()
+    return None
+
+def cdp_port_of(cls):
+    for part in CONF.get("G20_CDP_PORTS", "").split(","):
+        app, _, port = part.partition(":")
+        if app and port.isdigit() and app.lower() in cls: return int(port)
+    return None
+
+_YT_STATE = ("(function(){var a=document.activeElement;var g=a&&a.closest&&a.closest('ytlr-guide-entry-renderer');"
+             "return JSON.stringify({hash:location.hash,tag:a?a.tagName.toLowerCase():'',guide:g?g.getAttribute('aria-label'):null})})()")
+_KEYCODES = {"Escape": 27, "ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40, "Enter": 13}
+
+def yttv_native_voice(port):
+    """YouTube for TV: goes to its search page with the remote's own keys (Back, Up, OK) and presses its microphone button.
+    YouTube then listens, recognises and searches by itself. Returns True when the microphone button was pressed."""
+    pages = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % port, timeout=2))
+    page = next((t for t in pages if t.get("type") == "page" and t.get("webSocketDebuggerUrl")), None)
+    if not page: return False
+    sk, buf = _ws_connect("127.0.0.1", port, "/" + page["webSocketDebuggerUrl"].split("/", 3)[3]); state = {"id": 0}
+    try:
+        def look():
+            r = _cdp_call(sk, buf, state, "Runtime.evaluate", {"expression": _YT_STATE, "returnByValue": True})
+            return json.loads((r.get("result", {}) or {}).get("value") or "{}")
+        def press(name):
+            for kind in ("keyDown", "keyUp"):
+                _cdp_call(sk, buf, state, "Input.dispatchKeyEvent", {"type": kind, "key": name, "code": name,
+                          "windowsVirtualKeyCode": _KEYCODES[name], "nativeVirtualKeyCode": _KEYCODES[name]})
+            time.sleep(0.45)
+        for _ in range(4):                                  # leave the player
+            if not look().get("hash", "").startswith("#/watch"): break
+            press("Escape")
+        if not look().get("hash", "").startswith("#/search"):
+            last, direction = None, "ArrowUp"
+            for _ in range(12):
+                cur = look()
+                if cur.get("guide") == "Search": break
+                if cur.get("guide") is None: press("Escape")       # Back moves the focus to the left menu
+                else:
+                    if cur.get("guide") == last: direction = "ArrowDown" if direction == "ArrowUp" else "ArrowUp"
+                    last = cur.get("guide"); press(direction)
+            else: return False
+            press("Enter")
+            for _ in range(8):
+                if look().get("hash", "").startswith("#/search"): break
+                time.sleep(0.4)
+            else: return False
+        for _ in range(4):                                  # the focus starts on the microphone button
+            if look().get("tag") == "ytlr-search-voice-mic-button": break
+            press("ArrowUp")
+        else: return False
+        press("Enter")
+        return True
+    finally:
+        sk.close()
 
 
 def active_window():
@@ -407,6 +480,7 @@ def text_field_active():
     w = active_window()
     if not w or is_keyboard(w) or is_switcher(w) or is_sources(w): return (False, "ours")
     cls = (w["cls"] or "").lower()
+    if native_voice_app(cls): return (False, "native-voice")      # the app has its own search and voice: never our keyboard
     if cls in ("steam", "steamwebhelper"):
         try:
             if cdp_text_focus(8080, "Big Picture"): return (True, "steam")
@@ -414,9 +488,9 @@ def text_field_active():
     for part in CONF.get("G20_CDP_PORTS", "").split(","):
         app, _, port = part.partition(":")
         if app and port.isdigit() and app.lower() in cls:
-            try:
-                if cdp_text_focus(int(port)): return (True, "cdp:" + app)
-            except Exception: pass
+            # KWin reports a text input for every Chromium page with IME support, so for an app with a debug port only the page's own focus counts.
+            try: return (True, "cdp:" + app) if cdp_text_focus(int(port)) else (False, "cdp:" + app)
+            except Exception: return (False, "cdp:" + app)
     if kwin_text_input(): return (True, "kwin")
     return (False, "none")
 

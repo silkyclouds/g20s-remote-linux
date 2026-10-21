@@ -142,6 +142,8 @@ replacing what the field held. The transcript keeps its words only: no full stop
 
 **Languages**: `G20_VOICE_LANGS=fr,en` (first = default). With several languages the spoken language is detected among those only, so a family can ask for an English title one moment and a French one the next.
 
+**Apps with their own voice search.** YouTube for TV (VacuumTube) listens, transcribes and searches by itself, live, so none of the above runs there: no keyboard, no recognizer. The Mic key opens the app's search page and presses its microphone button; OK never opens the keyboard. List such apps in `G20_NATIVE_VOICE_APPS` (default `vacuumtube`).
+
 **Typed where?** Steam and any Chromium app with a debug port get the text through that port (Steam Big Picture's search box is replaced, then Enter). Other apps get Ctrl+A and Ctrl+V.
 Auto-submit is on by default (`G20_VOICE_AUTOSUBMIT=1`); set it to `0` to leave the words in the keyboard's field and press Search yourself.
 
@@ -188,6 +190,7 @@ G20_VOICE_MODEL=small                    # tiny | base | small | medium | large-
 #G20_VOICE_SILENCE=1.0                   # seconds of silence that end a recording
 #G20_VOICE_AUTOSUBMIT=1                  # 1 = run the search at once, 0 = wait for Search
 G20_CDP_PORTS=vacuumtube:9223            # Electron apps started with --remote-debugging-port (app:port)
+#G20_NATIVE_VOICE_APPS=vacuumtube        # apps with their own voice search: no keyboard, the Mic key presses their microphone
 ```
 
 Home Assistant side: `ha/automation.example.yaml` receives the webhook; `ha/power-with-soundbar.example.yaml` is the Power sequence when the PC sits behind a soundbar (Power toggles using a power-measuring plug on the TV, because many TV integrations report a stale state).
