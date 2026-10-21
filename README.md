@@ -166,6 +166,7 @@ A PC behind a soundbar or AV receiver can send TrueHD, DTS-HD and Dolby Digital 
 
 KDE Plasma 6 on **Wayland** (window scripts use KWin; the toasts need PySide6 with QtWebEngine and Plasma's LayerShellQt, present on Bazzite KDE), systemd user services, `qdbus`, `curl`, `busctl`, Python 3.11+ with PyGObject (`gi`) and Pillow,
 `ydotool`/`ydotoold` and `wl-clipboard` (keyboard / search), `parecord` (voice, package `pulseaudio-utils`), Chrome or Chromium (native or Flatpak) for the switcher and keyboard.
+**Handhelds in Game Mode (Steam Deck, ROG Ally under gamescope).** The key layer works anywhere: the remote pairs over Bluetooth, and the key map, volume, mute, power (suspend) and Back / OK need no desktop. The app switcher, the on-screen keyboard, the notices and voice search need KWin, so they only run in a Plasma session (switch with `steamosctl switch-to-desktop-mode plasma.desktop`). With no TV behind the console, leave the Home Assistant webhooks and `G20_SOURCES` empty and set `G20_CMD_VOLUP`, `G20_CMD_VOLDOWN`, `G20_CMD_MUTE` and `G20_CMD_POWER` to local commands (`wpctl set-volume ...`, `systemctl suspend`).
 Tested on **Bazzite** (Fedora Atomic) with Plasma 6.7, a 4K TV, Steam Big Picture, Plezy and VacuumTube. Nothing needs `rpm-ostree` layering:
 PipeWire (`pw-dump`, `pw-cli`, `pactl`) for the audio part. Everything lives in `~/.local`, `~/.config` and two files in `/etc/udev`.
 
