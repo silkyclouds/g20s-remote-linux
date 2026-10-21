@@ -59,6 +59,8 @@ def scene():
     def go():
         label = CONF.get("G20_SCENE_LABEL", "Scene"); status, detail = "ok", CONF.get("G20_SCENE_DETAIL", "Scene started")
         cmd, url = CONF.get("G20_CMD_SCENE"), CONF.get("G20_SCENE_WEBHOOK_URL")
+        if not cmd and not url:
+            log("scene key ignored: no scene configured"); return
         try:
             if cmd: r = subprocess.run(cmd, shell=True, timeout=15)
             elif url:

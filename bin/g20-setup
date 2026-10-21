@@ -242,6 +242,8 @@ def main():
     open(HWDB, "w").write("\n".join(lines) + "\n")
     open(RULES, "w").write("# Let the logged-in user read the remote (g20d is unprivileged and read-only).\n" + rule + "\n")
     subprocess.run(["systemd-hwdb", "update"]); subprocess.run(["udevadm", "control", "--reload"])
+    # Re-evaluate the key map of the nodes that already exist, so nothing has to be unplugged or reconnected.
+    subprocess.run(["udevadm", "trigger", "--subsystem-match=input", "--sysname-match=event*", "--action=change"])
     set_conf("G20_DEVICE_IDS", "%04x:%04x" % (group[1], group[2])); set_conf("G20_DEVICE_NAME", name)
     if not YES and ("source" in mapping and (not ONLY or "source" in ONLY)):
         ask_sources()
@@ -256,7 +258,7 @@ def main():
         lay = ask("  On-screen keyboard layout qwerty / azerty / qwertz [%s]: " % (get_conf("G20_KEYBOARD_LAYOUT") or "qwerty"))
         if lay: set_conf("G20_KEYBOARD_LAYOUT", lay.lower())
     restart_daemon()
-    print("\nDone. Now UNPLUG AND REPLUG the dongle (or disconnect/reconnect the Bluetooth remote) so the new mapping loads.")
+    print("\nDone. The new key map is already loaded. If a key still behaves the old way, replug the dongle or reconnect the Bluetooth remote.")
 
 if __name__ == "__main__":
     try: main()
