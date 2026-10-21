@@ -209,7 +209,8 @@ def load_conf():
                 k, v = l.split("=", 1); conf[k.strip()] = v.strip().strip('"')
     return conf
 CONF = load_conf()
-voice = {"state": "idle" if CONF.get("G20_VOICE_LANGS") else "off", "text": "", "lang": None}
+voice = {"state": "idle" if CONF.get("G20_VOICE_LANGS") else "off", "text": "", "lang": None, "error": None}
+VOICE_CTL = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-voice", "ctl")
 kbd = {"target": None}                                   # uuid of the window the typed text goes to
 
 def is_switcher(w): return w["title"] == TITLE and re.search("chrome", w["cls"], re.I)
@@ -254,8 +255,19 @@ def type_text(text, submit):
         time.sleep(0.3); subprocess.run(["ydotool", "key", "28:1", "28:0"], env=env, timeout=5)         # Enter
     log("typed %d characters%s" % (len(text), " + Enter" if submit else ""))
 
+def voice_command(cmd):
+    """Sends "start" or "cancel" to the voice daemon. Returns (http status, answer for the keyboard page)."""
+    import socket as _socket
+    try:
+        with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as c:
+            c.settimeout(3); c.connect(VOICE_CTL); c.sendall(cmd.encode()); answer = c.recv(16).decode()
+    except OSError:
+        return 503, {"started": False, "reason": "voice daemon not running"}
+    return (200, {"started": True}) if answer == "ok" else (409, {"started": False, "reason": answer})
+
 def set_voice(body):
     voice["state"] = body.get("state", voice["state"]); voice["text"] = body.get("text", "") or ""; voice["lang"] = body.get("lang")
+    voice["error"] = body.get("error")
     if voice["state"] in ("listening", "transcribing") and not keyboard_window():
         threading.Thread(target=open_keyboard, daemon=True).start()
     if voice["state"] == "idle" and voice["text"] and body.get("submit"):
@@ -478,7 +490,7 @@ class H(BaseHTTPRequestHandler):
         p = self.path.split("?")[0]
         if p in ("/", "/index.html"): return self._file(ROOT + "/index.html", "text/html; charset=utf-8")
         if p == "/keyboard.html": return self._file(ROOT + "/keyboard.html", "text/html; charset=utf-8")
-        if p == "/api/voice": return self._send(200, json.dumps(voice).encode())
+        if p == "/api/voice": return self._send(200, json.dumps(dict(voice, ready=os.path.exists(VOICE_CTL))).encode())
         if p == "/audio.html": return self._file(ROOT + "/audio.html", "text/html; charset=utf-8")
         if p == "/api/audio": return self._send(200, json.dumps(audio).encode())
         if p == "/notice.html": return self._file(ROOT + "/notice.html", "text/html; charset=utf-8")
@@ -519,6 +531,8 @@ class H(BaseHTTPRequestHandler):
             except Exception: pass
         from urllib.parse import urlparse as _up, parse_qs as _pq
         p = self.path.split("?")[0]; q = _pq(_up(self.path).query)
+        if p in ("/api/voice/start", "/api/voice/cancel"):
+            code, answer = voice_command(p.rsplit("/", 1)[1]); return self._send(code, json.dumps(answer).encode())
         if p == "/api/remote/sources_open": threading.Thread(target=toggle_sources, daemon=True).start()
         elif p == "/api/remote/source_key": threading.Thread(target=source_key, args=(q.get("cur", [""])[0],), daemon=True).start()
         elif p == "/api/remote/ok": threading.Thread(target=ok_pressed, daemon=True).start()

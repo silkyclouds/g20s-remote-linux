@@ -63,6 +63,12 @@ h1{margin:0;font-size:46px;font-weight:600;letter-spacing:-.01em}
 .k.hold::after{opacity:1}
 .k.rep{outline-color:oklch(0.68 0.2 25);background:oklch(0.32 0.08 25)}
 .k.rep .l{color:oklch(0.85 0.1 25)}
+.k.mic .l{display:flex;align-items:center;justify-content:center}
+.k.mic svg{width:42px;height:42px}
+.k.mic.live{background:var(--acc)}
+.k.mic.live.f{background:oklch(0.66 0.15 255)}
+.k.mic.wait .l{opacity:.5}
+.k .lv{height:44px;gap:5px}.k .lv i{width:6px;height:44px;background:#fff}
 #pop{position:absolute;display:none;gap:12px;padding:12px;border-radius:22px;background:#24262b;box-shadow:0 28px 70px rgba(0,0,0,.7);z-index:5;transform-origin:50% 100%;animation:popin .2s cubic-bezier(.2,.7,.2,1)}
 #pop.on{display:flex}
 #pop .k{position:relative;width:104px;background:#30333a}
@@ -106,7 +112,7 @@ footer{position:absolute;left:0;right:0;bottom:64px;display:flex;justify-content
   <div id="veil"></div>
   <div id="ptr"></div>
   <div id="dhint">D · demo</div>
-  <div id="demo"><h3>Demo states</h3><div id="dlist"></div><p>Keys 1–9, 0 and − or click. D hides this panel (in demo mode D does not type). Also via <code>?state=…</code></p></div>
+  <div id="demo"><h3>Demo states</h3><div id="dlist"></div><p>Keys 1–9, 0 and A–G (no D) or click. D hides this panel (in demo mode D does not type). Also via <code>?state=…</code></p></div>
 </div>
 <script>
 (function(){
@@ -116,18 +122,22 @@ const ROWS_L={
   azerty:['a z e r t y u i o p {bksp:2}','q s d f g h j k l m {clear:2}',"{shift:2} w x c v b n ' , . -"],
   qwertz:['q w e r t z u i o p {bksp:2}','a s d f g h j k l ß {clear:2}','{shift:2} y x c v b n m , . -']
 };
-const BOT_L='{123:2} {layout:2} {space:4} {cancel:2} {search:2}', BOT_S='{abc:2} {layout:2} {space:4} {cancel:2} {search:2}';
+const bot=first=>S.micOn?`{${first}:2} {layout:2} {space:3} {mic:1} {cancel:2} {search:2}`:`{${first}:2} {layout:2} {space:4} {cancel:2} {search:2}`;
+const MIC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"></path></svg>';
+const NOTHING="Didn't catch that. Try again.";
+const MOCK_SAY=['the grand budapest hotel',"le fabuleux destin d'amélie poulain"];
 const ROWS_N=['1 2 3 4 5 6 7 8 9 0 {bksp:2}','@ # € & _ - + ( ) / {clear:2}',"{sym:2} . , ? ! ' \" : ; % *"];
 const ROWS_S=['[ ] { } < > ^ ~ | \\ {bksp:2}','= $ £ ¥ ¢ ° § © ® ™ {clear:2}','{num:2} • · … « » ¿ ¡ ± × ÷'];
 const LAYOUTS=['qwerty','azerty','qwertz'];
 const VAR={a:'àâäáãåæ',c:'ç',e:'éèêë',i:'îïíì',n:'ñ',o:'ôöóòõœ',u:'ùûüú',y:'ÿý',"'":'’‘','-':'–—','.':'…','"':'“”«»','?':'¿','!':'¡','€':'$£¥'};
-const STATES=[['empty','Empty field'],['typing','Typing'],['caps','Shift / Caps lock'],['numbers','Numbers'],['symbols','Symbols'],['accents','Accent popup'],['long','Very long text'],['voice','Voice listening'],['voice-result','Voice result'],['mouse','Air-mouse pointer'],['backspace','Backspace held']];
-const DKEYS=['1','2','3','4','5','6','7','8','9','0','-'];
+const STATES=[['empty','Empty field'],['typing','Typing'],['caps','Shift / Caps lock'],['numbers','Numbers'],['symbols','Symbols'],['accents','Accent popup'],['long','Very long text'],['mic-ready','Mic ready'],['mic-listening','Mic listening'],['mic-transcribing','Mic transcribing'],['mic-result','Voice result'],['mic-nothing','Nothing heard'],['mic-error','Voice error'],['mic-unavailable','Voice not available'],['mouse','Air-mouse pointer'],['backspace','Backspace held']];
+const DKEYS=['1','2','3','4','5','6','7','8','9','0','a','b','c','e','f','g'];
+const ALIAS={voice:'mic-listening','voice-result':'mic-result'};
 
 const $=id=>document.getElementById(id);
 const stage=$('stage'), keysEl=$('keys'), pop=$('pop'), field=$('field'), fwin=$('fwin'), fin=$('fin'), txt=$('txt'), vc=$('vc'), ptr=$('ptr');
 const S={layout:'qwerty',qLayout:'qwerty',layer:'letters',shift:'off',text:'',f:0,memX:null,keys:[],pop:null,press:null,mock:false,busy:false,hw:false,
-  voice:{state:'off',text:''},lastVoice:'',fromVoice:false,frozen:false,app:'',label:'Search',scale:1,ox:0,oy:0};
+  voice:{state:'off',text:'',ready:false,error:null},micOn:false,msg:null,lastErr:null,canceled:false,startAt:0,mockT:[],mockN:0,lastVoice:'',fromVoice:false,frozen:false,app:'',label:'Search',scale:1,ox:0,oy:0};
 
 function fit(){
   const s=Math.min(innerWidth/1920, innerHeight/1080);
@@ -159,15 +169,16 @@ function label(k){
     case '123': case 'num': return '123'; case 'abc': return 'ABC'; case 'sym': return '#+=';
     case 'layout': return S.layout.toUpperCase(); case 'space': return 'Space';
     case 'cancel': return 'Cancel'; case 'search': return 'Search';
+    case 'mic': return null;
   }
   return '';
 }
 function buildKeys(){
-  const rows=S.layer==='letters'?[...ROWS_L[S.layout],BOT_L]:S.layer==='num'?[...ROWS_N,BOT_S]:[...ROWS_S,BOT_S];
+  const rows=S.layer==='letters'?[...ROWS_L[S.layout],bot('123')]:S.layer==='num'?[...ROWS_N,bot('abc')]:[...ROWS_S,bot('abc')];
   const prev=S.keys[S.f], row=prev?prev.r:0, x=S.memX!=null?S.memX:(prev?prev.cx:0);
   S.keys=parse(rows); keysEl.innerHTML='';
   S.keys.forEach((k,i)=>{
-    const e=el('div','k'+(k.t==='char'?' ch':' sp')+(k.span>=4?' s4':k.span>=2?' s2':'')+(k.t==='search'?' go':''));
+    const e=el('div','k'+(k.t==='char'?' ch':' sp')+(k.span>=4?' s4':k.span>=2?' s2':'')+(k.t==='search'?' go':'')+(k.t==='mic'?' mic':''));
     e.style.left=k.x+'px'; e.style.top=(k.r*(U+G))+'px'; e.style.width=k.w+'px'; e.dataset.i=i;
     e.append(el('span','l'));
     if(k.t==='char' && VAR[k.v]) e.append(el('i','dot'));
@@ -178,11 +189,19 @@ function buildKeys(){
   focus(prev?S.keys.indexOf(findAt(row,x)):0);
 }
 function refreshLabels(){
+  paintMic();
   S.keys.forEach(k=>{
-    k.el.firstChild.textContent=label(k);
+    if(k.t!=='mic') k.el.firstChild.textContent=label(k);
     if(k.t==='shift'){ k.el.classList.toggle('on1',S.shift==='once'); k.el.classList.toggle('on2',S.shift==='caps'); }
   });
   if(S.pop){ S.pop.list=S.pop.base.map(cased); [...pop.children].forEach((e,j)=>e.firstChild.textContent=S.pop.list[j]); }
+}
+function paintMic(){
+  const k=S.keys.find(k=>k.t==='mic'); if(!k) return;
+  const st=S.voice.state, mode=st==='listening'?'live':st==='transcribing'?'wait':'idle';
+  if(k.mode===mode) return; k.mode=mode;
+  k.el.classList.toggle('live',mode==='live'); k.el.classList.toggle('wait',mode==='wait');
+  k.el.firstChild.innerHTML=mode==='live'?'<span class="lv"><i></i><i></i><i></i><i></i><i></i></span>':mode==='wait'?'<span class="dots"><i></i><i></i><i></i></span>':MIC_SVG;
 }
 function findAt(r,x){
   const row=S.keys.filter(k=>k.r===r);
@@ -212,8 +231,10 @@ function updateHints(){
     case 'layout': ok='Next layout'; break;
     case '123': case 'num': ok='Numbers'; break; case 'sym': ok='Symbols'; break; case 'abc': ok='Letters'; break;
     case 'cancel': ok='Close'; break; case 'search': ok='Search'; break;
+    case 'mic': ok=S.voice.state==='listening'?'Stop listening':S.voice.state==='transcribing'?null:'Speak'; break;
   } }
-  $('hints').innerHTML=hint('OK',ok)+(hold?hint('OK<small>hold</small>',hold,'hHold'):'')+hint('BACK',back);
+  if(!S.pop && S.voice.state==='listening') back='Stop listening';
+  $('hints').innerHTML=(ok?hint('OK',ok):'')+(hold?hint('OK<small>hold</small>',hold,'hHold'):'')+hint('BACK',back);
 }
 function setHoldHint(t){ const h=$('hHold'); if(h) h.lastChild.textContent=t; }
 
@@ -232,23 +253,33 @@ function renderVoice(){
   vc.className='';
   if(st==='listening'){ vc.className='on listening'; vc.innerHTML='<span class="lv"><i></i><i></i><i></i><i></i><i></i></span><span>Listening…</span>'; }
   else if(st==='transcribing'){ vc.className='on'; vc.innerHTML='<span class="dots"><i></i><i></i><i></i></span><span>Transcribing…</span>'; }
+  else if(S.msg){ vc.className='on'; vc.innerHTML=''; vc.append(el('span',null,S.msg)); }
   else if(S.fromVoice){ vc.className='on'; vc.innerHTML='<span class="key">MIC</span><span>From voice · edit or Search</span>'; }
-  else if(st==='idle'){ vc.className='on'; vc.innerHTML='<span class="key">MIC</span><span>Hold the mic key and speak</span>'; }
+  else if(st==='idle'){ vc.className='on'; vc.innerHTML='<span class="key">MIC</span><span>Press the mic key or the remote\'s mic button and speak</span>'; }
   else vc.innerHTML='';
+  paintMic(); updateHints();
 }
+function showMsg(t,ms){ S.msg=t; clearTimeout(S.msgT); S.msgT=setTimeout(()=>{ S.msg=null; renderVoice(); },ms); renderVoice(); }
 function applyVoice(v){
   v=v||{}; const st=['off','idle','listening','transcribing'].includes(v.state)?v.state:'off', t=typeof v.text==='string'?v.text:'';
-  S.voice={state:st,text:t};
-  if(t && t!==S.lastVoice){ S.text=t; S.fromVoice=true; closePop(); toast('Voice text added'); }
-  S.lastVoice=t;
+  const err=typeof v.error==='string'&&v.error?v.error:null, ready=v.ready===true, prev=S.voice.state;
+  S.voice={state:st,text:t,ready,error:err};
+  if(ready!==S.micOn){ S.micOn=ready; closePop(); if(S.keys.length) buildKeys(); }
+  const ended=(prev==='listening'||prev==='transcribing') && st==='idle';
+  if(t && (t!==S.lastVoice || ended)){ S.text=t; S.fromVoice=true; closePop(); toast('Voice text added'); }
+  else if(ended && !t && !err && !S.canceled) showMsg(NOTHING,3000);
+  if(err && err!==S.lastErr) showMsg(err,4000);
+  S.lastErr=err; S.lastVoice=t;
   renderVoice(); renderField();
 }
 let fails=0;
 function poll(){
   if(S.busy) return;
   fetch('/api/voice',{cache:'no-store'}).then(r=>{ if(!r.ok) throw 0; return r.json(); })
-    .then(v=>{ fails=0; applyVoice(v); })
-    .catch(()=>{ if(++fails===3) applyVoice({state:'off'}); })
+    .then(v=>{ fails=0;
+      if(S.startAt && performance.now()-S.startAt<1500 && v && v.ready!==false && !v.error && v.state!=='listening' && v.state!=='transcribing') return;
+      applyVoice(v); })
+    .catch(()=>{ if(++fails===3) applyVoice({state:'off',ready:false}); })
     .finally(()=>setTimeout(poll, fails>=3?5000:400));
 }
 
@@ -261,6 +292,31 @@ function typeChar(c,fromKey){
 }
 function del(){ S.text=chars(S.text).slice(0,-1).join(''); S.fromVoice=false; renderVoice(); renderField(true); }
 function delWord(){ S.text=S.text.replace(/\S*\s*$/,''); S.fromVoice=false; renderVoice(); renderField(true); }
+function micFail(msg,ready){ S.startAt=0; S.canceled=true; applyVoice({state:ready?'idle':'off',text:'',ready}); showMsg(msg,4000); }
+function micPress(){
+  const st=S.voice.state;
+  if(st==='transcribing') return;
+  if(st==='listening'){ stopListening(); return; }
+  S.canceled=false; S.startAt=performance.now();
+  if(S.mock){ mockRun(); return; }
+  applyVoice({state:'listening',text:S.voice.text,ready:true});
+  fetch('/api/voice/start',{method:'POST'}).then(r=>{
+    if(r.status===503) micFail("Voice isn't running on this PC",false);
+    else if(!r.ok && r.status!==409) micFail("Couldn't start listening",true);
+  }).catch(()=>micFail("Couldn't start listening",true));
+}
+function stopListening(){
+  S.canceled=true; S.startAt=0;
+  if(S.mock) clearMock(); else post('/api/voice/cancel');
+  applyVoice({state:'idle',text:'',ready:true});
+}
+function clearMock(){ S.mockT.forEach(clearTimeout); S.mockT=[]; }
+function mockRun(){
+  clearMock(); applyVoice({state:'listening',text:'',ready:true});
+  const say=MOCK_SAY[S.mockN++%MOCK_SAY.length];
+  S.mockT=[setTimeout(()=>applyVoice({state:'transcribing',text:'',ready:true}),2600),
+    setTimeout(()=>applyVoice({state:'idle',text:say,ready:true}),3900)];
+}
 function setLayer(l){ S.layer=l; closePop(); buildKeys(); }
 function flash(k){ k.el.classList.add('press'); setTimeout(()=>k.el.classList.remove('press'),140); }
 
@@ -275,6 +331,7 @@ function act(k){
     case 'layout': S.layout=LAYOUTS[(LAYOUTS.indexOf(S.layout)+1)%3]; if(S.layer==='letters') buildKeys(); else refreshLabels(); toast(S.layout.toUpperCase()); break;
     case 'cancel': cancel(); break;
     case 'search': submit(); break;
+    case 'mic': micPress(); break;
   }
 }
 
@@ -283,6 +340,7 @@ function down(){
   if(S.busy || S.press) return;
   unfreeze();
   const k=S.keys[S.f]; if(!k) return;
+  if(k.t==='mic' && S.voice.state==='transcribing') return;
   const p=S.press={k,t0:performance.now(),done:false};
   flash(k);
   if((k.t==='char' && VAR[k.v]) || k.t==='shift'){
@@ -378,7 +436,8 @@ addEventListener('keydown',e=>{
   const k=e.key, mod=e.ctrlKey||e.metaKey||e.altKey;
   if(S.mock && !mod){
     if(k==='d'||k==='D'){ e.preventDefault(); $('demo').classList.toggle('on'); return; }
-    if($('demo').classList.contains('on') && DKEYS.includes(k)){ e.preventDefault(); loadState(STATES[DKEYS.indexOf(k)][0]); return; }
+    const dk=k.toLowerCase();
+    if($('demo').classList.contains('on') && DKEYS.includes(dk)){ e.preventDefault(); loadState(STATES[DKEYS.indexOf(dk)][0]); return; }
   }
   if(S.busy){ e.preventDefault(); return; }
   if(k==='Enter'){
@@ -388,7 +447,7 @@ addEventListener('keydown',e=>{
     down(); return;
   }
   if(ARROWS[k]){ e.preventDefault(); S.hw=false; hideMouse(); stopPress(); nav(ARROWS[k]); return; }
-  if(k==='Escape'||k==='BrowserBack'||k==='GoBack'){ e.preventDefault(); stopPress(); if(S.pop) closePop(); else cancel(); return; }
+  if(k==='Escape'||k==='BrowserBack'||k==='GoBack'){ e.preventDefault(); stopPress(); if(S.pop) closePop(); else if(S.voice.state==='listening') stopListening(); else cancel(); return; }
   if(k==='Backspace'){ e.preventDefault(); S.hw=true; closePop(); unfreeze(); del(); return; }
   if(k.length===1 && !mod){ e.preventDefault(); S.hw=true; closePop(); unfreeze(); typeChar(k,false); }
 });
@@ -422,11 +481,14 @@ addEventListener('pointerup',()=>up());
 /* demo */
 const LONG='The Lord of the Rings: The Fellowship of the Ring extended edition behind the scenes documentary';
 function loadState(name){
+  name=ALIAS[name]||name;
   if(!STATES.some(s=>s[0]===name)) name='empty';
+  clearMock(); clearTimeout(S.msgT); S.msg=null; S.lastErr=null; S.canceled=false; S.startAt=0;
+  S.micOn=name!=='mic-unavailable';
   document.querySelectorAll('#dlist button').forEach(b=>b.classList.toggle('cur',b.dataset.s===name));
   stopPress(); closePop(); hideMouse(); S.frozen=true; unfreeze();
   $('veil').classList.remove('on'); S.busy=false; S.hw=false;
-  S.layout=S.qLayout; S.layer='letters'; S.shift='off'; S.text=''; S.fromVoice=false; S.voice={state:'off',text:''}; S.lastVoice='';
+  S.layout=S.qLayout; S.layer='letters'; S.shift='off'; S.text=''; S.fromVoice=false; S.voice={state:'off',text:'',ready:S.micOn,error:null}; S.lastVoice='';
   S.memX=null; S.keys=[]; S.f=0;
   if(name==='numbers') S.layer='num';
   if(name==='symbols') S.layer='sym';
@@ -442,8 +504,13 @@ function loadState(name){
     case 'symbols': S.text='Tom & Jerry '; F(ch('[')); break;
     case 'accents': S.text='Am'; openPop(F(ch('e'))); break;
     case 'long': S.text=LONG; F(ty('space')); break;
-    case 'voice': S.voice.state='listening'; F(ty('search')); break;
-    case 'voice-result': S.voice.state='idle'; S.text=S.lastVoice='the grand budapest hotel'; S.fromVoice=true; F(ty('search')); break;
+    case 'mic-ready': S.voice.state='idle'; F(ty('mic')); break;
+    case 'mic-listening': S.voice.state='listening'; F(ty('mic')); break;
+    case 'mic-transcribing': S.voice.state='transcribing'; F(ty('mic')); break;
+    case 'mic-result': S.voice.state='idle'; S.text=S.lastVoice='the grand budapest hotel'; S.fromVoice=true; F(ty('mic')); break;
+    case 'mic-nothing': S.voice.state='idle'; F(ty('mic')); showMsg(NOTHING,3000); break;
+    case 'mic-error': S.voice.state='idle'; S.voice.error=S.lastErr='The transcription server did not answer'; F(ty('mic')); showMsg(S.lastErr,4000); break;
+    case 'mic-unavailable': S.text='alien'; F(ty('space')); break;
     case 'mouse': { S.text='jelly'; const k=F(ch('f')); placePtr(248+k.cx+22,424+k.r*(U+G)+66); stage.classList.add('mouse'); break; }
     case 'backspace': { S.text='Interstellar 20'; const k=F(ty('bksp')); k.el.classList.add('rep'); stage.classList.add('holding'); setHoldHint('Deleting words…'); S.frozen=true; break; }
   }
@@ -452,7 +519,7 @@ function loadState(name){
 function enableDemo(){
   S.mock=true; $('dhint').style.display='block';
   const l=$('dlist');
-  STATES.forEach(([k,lab],i)=>{ const b=el('button'); b.dataset.s=k; b.append(el('b',null,i===10?'−':(i+1)%10), document.createTextNode(lab)); b.onclick=()=>loadState(k); l.append(b); });
+  STATES.forEach(([k,lab],i)=>{ const b=el('button'); b.dataset.s=k; b.append(el('b',null,DKEYS[i].toUpperCase()), document.createTextNode(lab)); b.onclick=()=>loadState(k); l.append(b); });
 }
 
 /* init */

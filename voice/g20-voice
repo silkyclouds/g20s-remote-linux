@@ -1,23 +1,34 @@
 #!/usr/bin/env python3
-"""g20-voice - voice search for Bluetooth voice remotes (ATVV), in the languages you choose.
+"""g20-voice - voice search for the on-screen keyboard, in the languages you choose.
 
-Pipeline:  remote mic (BLE ATVV) -> atvvoice (PipeWire virtual microphone + D-Bus state) -> this daemon -> faster-whisper -> text
-The text is handed to the keyboard overlay of g20-switcher-server (POST /api/voice/set), where it fills the search field.
+Two ways to start listening:
+  * the microphone key on the on-screen keyboard (any remote whose microphone shows up as a PipeWire/PulseAudio source,
+    for example the 2.4 GHz dongle of a G20S): the keyboard page calls g20-switcher-server, which sends "start" to the
+    control socket of this daemon. Recording stops by itself when you stop talking.
+  * a Bluetooth voice remote (ATVV): remote mic -> atvvoice (PipeWire virtual microphone + D-Bus state). While the mic key
+    is held atvvoice reports "streaming"; on release we transcribe.
 
-While the mic key is held, atvvoice's D-Bus state is "streaming": we record the PipeWire source and, on release, transcribe.
+The text is handed to the keyboard overlay (POST /api/voice/set), where it fills the search field.
 Language: with several languages in G20_VOICE_LANGS the spoken language is detected among those only (e.g. "fr,en"), so a
 French household can still ask for an English title; the first language is the default when detection is unsure.
 
 Configuration (~/.config/g20/g20.conf):
   G20_VOICE_LANGS=fr,en      languages (ISO 639-1), first = default
-  G20_VOICE_MODEL=small      faster-whisper model: tiny, base, small, medium, large-v3 ...
-  G20_VOICE_DEVICE=auto      auto | cuda | cpu
+  G20_VOICE_BACKEND=local    local = faster-whisper in this process | http = a server that speaks the OpenAI
+                             audio/transcriptions API (whisper.cpp server, faster-whisper-server, LocalAI)
+  G20_VOICE_URL=http://127.0.0.1:8178   address of that server (backend http)
+  G20_VOICE_MODEL=small      faster-whisper model: tiny, base, small, medium, large-v3 ... (name sent to an http server)
+  G20_VOICE_DEVICE=auto      auto | cuda | cpu   (backend local)
+  G20_VOICE_SOURCE=auto      microphone: auto = the one named like your remote (G20_DEVICE_NAME), else the default input;
+                             or a PipeWire/PulseAudio source name
+  G20_VOICE_SILENCE=1.0      seconds of silence that end a recording
   G20_VOICE_AUTOSUBMIT=0     1 = submit the search as soon as the text is ready
 Test without a remote:  g20-voice --file recording.wav
 """
-import json, os, subprocess, sys, threading, time, urllib.request, wave
+import json, os, socket, struct, subprocess, sys, tempfile, threading, time, urllib.request, uuid, wave
 SERVER = "http://127.0.0.1:48765"
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-voice"); os.makedirs(RUN, exist_ok=True)
+CTL = os.path.join(RUN, "ctl")
 
 def log(*a): print(*a, flush=True)
 
@@ -31,10 +42,86 @@ def load_conf():
     return conf
 CONF = load_conf()
 LANGS = [x.strip().lower() for x in CONF.get("G20_VOICE_LANGS", "en").split(",") if x.strip()]
+BACKEND = CONF.get("G20_VOICE_BACKEND", "local")
+URL = CONF.get("G20_VOICE_URL", "http://127.0.0.1:8178")
 MODEL_NAME = CONF.get("G20_VOICE_MODEL", "small")
 DEVICE = CONF.get("G20_VOICE_DEVICE", "auto")
+SOURCE = CONF.get("G20_VOICE_SOURCE", "auto")
+SILENCE_S = float(CONF.get("G20_VOICE_SILENCE", "1.0"))
 AUTOSUBMIT = CONF.get("G20_VOICE_AUTOSUBMIT", "0") == "1"
+RATE = 16000
+LANGUAGE_NAMES = {"en": "english", "fr": "french", "de": "german", "es": "spanish", "it": "italian", "nl": "dutch",
+                  "pt": "portuguese", "pl": "polish", "ru": "russian", "ja": "japanese", "ko": "korean", "zh": "chinese",
+                  "ar": "arabic", "tr": "turkish", "sv": "swedish", "da": "danish", "no": "norwegian", "fi": "finnish"}
 
+# ---------- end of speech ----------
+class Endpointer:
+    """Decides when a recording is over from the loudness of successive 100 ms chunks.
+
+    The noise floor is learned from the first 0.3 s; speech is a chunk clearly above it. Recording ends after `silence`
+    seconds of quiet that follow speech, after `max_wait` seconds without any speech, or after `max_total` seconds.
+    """
+    def __init__(self, silence=1.0, max_wait=6.0, max_total=15.0, chunk=0.1):
+        self.silence, self.max_wait, self.max_total, self.chunk = silence, max_wait, max_total, chunk
+        self.t = 0.0; self.noise = []; self.heard = False; self.quiet = 0.0
+
+    def feed(self, rms):
+        """Returns None to keep going, or 'speech' | 'nothing' | 'limit' when recording should stop."""
+        self.t += self.chunk
+        if self.t <= 0.3:
+            self.noise.append(rms); return None
+        floor = max(self.noise) if self.noise else 0.0
+        loud = rms > max(floor * 2.5, 350.0)
+        if loud: self.heard = True; self.quiet = 0.0
+        elif self.heard: self.quiet += self.chunk
+        if self.heard and self.quiet >= self.silence: return "speech"
+        if not self.heard and self.t >= self.max_wait: return "nothing"
+        if self.t >= self.max_total: return "speech" if self.heard else "nothing"
+        return None
+
+def chunk_rms(raw):
+    n = len(raw) // 2
+    if not n: return 0.0
+    samples = struct.unpack("<%dh" % n, raw[:n * 2])
+    return (sum(x * x for x in samples) / n) ** 0.5
+
+def pick_source():
+    """The microphone to listen to: G20_VOICE_SOURCE, else the input that belongs to the remote's own dongle, else the default."""
+    if SOURCE not in ("auto", ""): return SOURCE
+    hint = (CONF.get("G20_DEVICE_NAME", "").split(" Keyboard")[0] or "").strip().lower()
+    try: out = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True, timeout=3).stdout
+    except Exception: return None
+    names = [l.split("\t")[1] for l in out.splitlines() if len(l.split("\t")) > 1 and ".monitor" not in l.split("\t")[1]]
+    key = hint.split(" usb")[0].replace(" ", "_") if hint else ""
+    for n in names:
+        if key and key in n.lower().replace(" ", "_"): return n
+    return None
+
+def record_until_silence(source, cancelled=lambda: False):
+    """Records the microphone until you stop talking. Returns the path of a 16 kHz mono WAV, or None when nobody spoke or `cancelled()` turned true."""
+    cmd = ["parecord", "--raw", "--rate=%d" % RATE, "--channels=1", "--format=s16le"] + (["-d", source] if source else [])
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    ep, pcm, size = Endpointer(silence=SILENCE_S), bytearray(), int(RATE * 0.1) * 2
+    verdict = "nothing"
+    try:
+        while True:
+            raw = proc.stdout.read(size)
+            if not raw or cancelled(): break
+            pcm += raw
+            verdict = ep.feed(chunk_rms(raw)) or verdict
+            if verdict in ("speech", "limit") and ep.heard: break
+            if verdict == "nothing" and not ep.heard and ep.t >= ep.max_wait: break
+    finally:
+        proc.terminate()
+        try: proc.wait(timeout=2)
+        except Exception: proc.kill()
+    if not ep.heard or cancelled(): return None
+    path = os.path.join(RUN, "rec-%s.wav" % uuid.uuid4().hex[:8])
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE); w.writeframes(bytes(pcm))
+    return path
+
+# ---------- transcription ----------
 _model = None
 def model():
     global _model
@@ -52,8 +139,7 @@ def model():
             log("GPU load failed, falling back to CPU:", e); _model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
     return _model
 
-def transcribe(path):
-    """Returns (language, text)."""
+def transcribe_local(path):
     from faster_whisper.audio import decode_audio
     audio = decode_audio(path, sampling_rate=16000)
     if len(audio) < 16000 * 0.4: return None, ""
@@ -67,19 +153,102 @@ def transcribe(path):
     segs, info = m.transcribe(audio, language=lang, beam_size=5, vad_filter=True, condition_on_previous_text=False)
     return lang, " ".join(s.text.strip() for s in segs).strip()
 
+def _multipart(fields, path):
+    boundary = uuid.uuid4().hex
+    out = bytearray()
+    for k, v in fields.items():
+        out += ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n" % (boundary, k, v)).encode()
+    out += ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"speech.wav\"\r\nContent-Type: audio/wav\r\n\r\n" % boundary).encode()
+    with open(path, "rb") as f: out += f.read()
+    out += ("\r\n--%s--\r\n" % boundary).encode()
+    return bytes(out), "multipart/form-data; boundary=" + boundary
+
+def _http_call(path, language):
+    base = URL.rstrip("/")
+    endpoint = base if base.split("//", 1)[-1].count("/") else base + "/v1/audio/transcriptions"
+    fields = {"model": MODEL_NAME, "response_format": "verbose_json"}
+    if language: fields["language"] = language
+    body, ctype = _multipart(fields, path)
+    req = urllib.request.Request(endpoint, data=body, headers={"Content-Type": ctype}, method="POST")
+    with urllib.request.urlopen(req, timeout=60) as r: return json.loads(r.read().decode("utf-8"))
+
+def transcribe_http(path):
+    """With several languages the server detects the language first; if it is not one of yours, ask again in the default."""
+    with wave.open(path) as w:
+        if w.getnframes() < RATE * 0.4: return None, ""
+    if len(LANGS) == 1:
+        r = _http_call(path, LANGS[0]); return LANGS[0], (r.get("text") or "").strip()
+    r = _http_call(path, None)
+    spoken = (r.get("language") or "").strip().lower()
+    code = next((c for c in LANGS if spoken in (c, LANGUAGE_NAMES.get(c))), None)
+    if code: return code, (r.get("text") or "").strip()
+    r = _http_call(path, LANGS[0]); return LANGS[0], (r.get("text") or "").strip()
+
+def transcribe(path):
+    """Returns (language, text)."""
+    return transcribe_http(path) if BACKEND == "http" else transcribe_local(path)
+
 def post(path, body):
     try:
         r = urllib.request.Request(SERVER + path, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(r, timeout=5)
     except Exception as e: log("server unreachable:", e)
 
-# ---------- atvvoice (D-Bus) ----------
-def run_daemon():
+def deliver(path):
+    """Transcribes a recording and hands the text to the keyboard overlay."""
+    post("/api/voice/set", {"state": "transcribing", "text": ""})
+    try:
+        lang, text = transcribe(path); log("heard (%s): %s" % (lang, text))
+        post("/api/voice/set", {"state": "idle", "text": text, "lang": lang, "submit": bool(text) and AUTOSUBMIT})
+    except Exception as e:
+        log("transcription failed:", e); post("/api/voice/set", {"state": "idle", "text": "", "error": str(e)[:120]})
+    finally:
+        try: os.remove(path)
+        except OSError: pass
+
+# ---------- control socket (the on-screen keyboard's mic key) ----------
+class Listener:
+    """One listening session at a time, started from the control socket."""
+    def __init__(self): self.busy = threading.Lock(); self.stop = threading.Event()
+
+    def start(self):
+        if not self.busy.acquire(blocking=False): return "busy"
+        self.stop.clear()
+        threading.Thread(target=self._run, daemon=True).start(); return "ok"
+
+    def cancel(self):
+        """Stops the recording in progress and drops it. Does nothing once transcription has begun."""
+        self.stop.set(); return "ok"
+
+    def _run(self):
+        try:
+            post("/api/voice/set", {"state": "listening", "text": ""}); log("listening")
+            path = record_until_silence(pick_source(), self.stop.is_set)
+            if path: deliver(path)
+            else:
+                log("nothing heard"); post("/api/voice/set", {"state": "idle", "text": ""})
+        except Exception as e:
+            log("listening failed:", e); post("/api/voice/set", {"state": "idle", "text": "", "error": str(e)[:120]})
+        finally: self.busy.release()
+
+def serve_control(listener):
+    try: os.remove(CTL)
+    except OSError: pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); srv.bind(CTL); os.chmod(CTL, 0o600); srv.listen(4)
+    while True:
+        conn, _ = srv.accept()
+        with conn:
+            cmd = conn.recv(16).decode().strip()
+            action = getattr(listener, cmd, None) if cmd in ("start", "cancel") else None
+            conn.sendall((action() if action else "unknown").encode())
+
+# ---------- atvvoice (D-Bus), for Bluetooth voice remotes ----------
+def run_atvvoice():
     import gi
     gi.require_version("Gio", "2.0")
     from gi.repository import Gio, GLib
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
-    state = {"rec": None, "name": None}
+    state = {"rec": None}
 
     def start_recording(node):
         path = os.path.join(RUN, "rec.wav")
@@ -91,14 +260,7 @@ def run_daemon():
         rec = state["rec"]; state["rec"] = None
         if not rec: return
         proc, path = rec; proc.terminate(); proc.wait(timeout=3)
-        post("/api/voice/set", {"state": "transcribing", "text": ""})
-        def work():
-            try:
-                lang, text = transcribe(path); log("heard (%s): %s" % (lang, text))
-                post("/api/voice/set", {"state": "idle", "text": text, "lang": lang, "submit": bool(text) and AUTOSUBMIT})
-            except Exception as e:
-                log("transcription failed:", e); post("/api/voice/set", {"state": "idle", "text": ""})
-        threading.Thread(target=work, daemon=True).start()
+        threading.Thread(target=deliver, args=(path,), daemon=True).start()
 
     def on_signal(conn, sender, path, iface, signal, params, *_):
         new = params.unpack()[0]; log("atvvoice state:", new)
@@ -122,11 +284,21 @@ def run_daemon():
                 bus.signal_subscribe(n, "org.atvvoice.Daemon", "MicStateChanged", "/org/atvvoice/Daemon", None, Gio.DBusSignalFlags.NONE, on_signal)
         return True
     scan(); GLib.timeout_add_seconds(3, scan)
-    threading.Thread(target=model, daemon=True).start()          # warm the model while idle
-    log("g20-voice ready; languages:", LANGS, "model:", MODEL_NAME)
     GLib.MainLoop().run()
+
+def run_daemon():
+    listener = Listener()
+    threading.Thread(target=serve_control, args=(listener,), daemon=True).start()
+    if BACKEND != "http": threading.Thread(target=model, daemon=True).start()       # warm the local model while idle
+    log("g20-voice ready; languages:", LANGS, "backend:", BACKEND, "model:", MODEL_NAME)
+    try: run_atvvoice()
+    except ImportError:
+        log("no Bluetooth voice remote support (python3-gobject missing): the on-screen keyboard mic key still works")
+        while True: time.sleep(3600)
 
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--file":
         t0 = time.time(); lang, text = transcribe(sys.argv[2]); print(json.dumps({"language": lang, "text": text, "seconds": round(time.time() - t0, 2)}, ensure_ascii=False))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--listen":           # one session from the terminal, for testing
+        path = record_until_silence(pick_source()); print(json.dumps({"recorded": bool(path)})); print(json.dumps(dict(zip(("language", "text"), transcribe(path)) if path else {}), ensure_ascii=False))
     else: run_daemon()

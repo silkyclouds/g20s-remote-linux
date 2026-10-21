@@ -1,9 +1,49 @@
 #!/usr/bin/env bash
-# Optional: voice search for a BLUETOOTH voice remote (ATVV protocol). No sudo needed except to pair the remote.
+# Optional: voice search for the on-screen keyboard.
+#
+#   install-voice.sh                 Bluetooth voice remote (ATVV protocol) + faster-whisper in this machine
+#   install-voice.sh --http URL      any remote whose microphone is a PipeWire/PulseAudio source (for example the 2.4 GHz
+#                                    dongle of a G20S), transcription by a server that speaks the OpenAI audio API
+#                                    (whisper.cpp server, faster-whisper-server): nothing else to install, no model here.
+#                                    LANGS="fr,en" install-voice.sh --http http://127.0.0.1:8178
+#
+# No sudo needed except to pair a Bluetooth remote.
 #   1. atvvoice  : exposes the remote's mic as a PipeWire source (prebuilt binary from github.com/b0o/ATVVoice)
-#   2. g20-voice : records while the mic key is held, transcribes with faster-whisper (GPU if NVIDIA, else CPU)
+#   2. g20-voice : listens when the keyboard's mic key is pressed (or the Bluetooth mic key is held), transcribes
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+
+set_conf() {   # set_conf KEY VALUE : writes or replaces a line of ~/.config/g20/g20.conf
+  local f="$HOME/.config/g20/g20.conf"; mkdir -p "$(dirname "$f")"; touch "$f"
+  if grep -q "^$1=" "$f"; then sed -i "s|^$1=.*|$1=$2|" "$f"; else printf '%s=%s\n' "$1" "$2" >> "$f"; fi
+}
+
+if [ "${1:-}" = "--http" ]; then
+  URL=${2:?usage: install-voice.sh --http http://host:port}
+  mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
+  install -m 755 "$here/g20-voice" "$HOME/.local/bin/g20-voice"
+  set_conf G20_VOICE_BACKEND http; set_conf G20_VOICE_URL "$URL"
+  grep -q '^G20_VOICE_LANGS=' "$HOME/.config/g20/g20.conf" || set_conf G20_VOICE_LANGS "${LANGS:-en}"
+  command -v parecord >/dev/null || echo "Missing: parecord (package pulseaudio-utils). The keyboard's mic key needs it."
+  cat > "$HOME/.config/systemd/user/g20-voice.service" <<'UNIT'
+[Unit]
+Description=G20 voice search (microphone to text, through a transcription server)
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.local/bin/g20-voice
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=default.target
+UNIT
+  systemctl --user daemon-reload
+  systemctl --user enable --now g20-voice.service
+  echo "Voice is installed (server: $URL). Press the mic key on the on-screen keyboard and speak."
+  exit 0
+fi
+
 D=$HOME/.local/share/g20-voice; mkdir -p "$D" "$HOME/.local/bin" "$HOME/.config/systemd/user"
 echo "== atvvoice"
 V=$(curl -fsSL https://api.github.com/repos/b0o/ATVVoice/releases/latest | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
