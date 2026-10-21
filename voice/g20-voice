@@ -58,21 +58,24 @@ LANGUAGE_NAMES = {"en": "english", "fr": "french", "de": "german", "es": "spanis
 class Endpointer:
     """Decides when a recording is over from the loudness of successive 100 ms chunks.
 
-    The noise floor is learned from the first 0.3 s; speech is a chunk clearly above it. Recording ends after `silence`
-    seconds of quiet that follow speech, after `max_wait` seconds without any speech, or after `max_total` seconds.
+    The noise floor is the quiet quarter of the last three seconds, so a click or a first word at the very start does not
+    raise the bar. Speech is a chunk clearly above it. Recording ends after `silence` seconds of quiet that follow speech,
+    after `max_wait` seconds without any speech, or after `max_total` seconds.
     """
+    MIN_LEVEL, MAX_LEVEL, WINDOW = 300.0, 1200.0, 30
+
     def __init__(self, silence=1.0, max_wait=6.0, max_total=15.0, chunk=0.1):
         self.silence, self.max_wait, self.max_total, self.chunk = silence, max_wait, max_total, chunk
-        self.t = 0.0; self.noise = []; self.heard = False; self.quiet = 0.0
+        self.t = 0.0; self.recent = []; self.heard = False; self.quiet = 0.0; self.peak = 0.0; self.level = self.MIN_LEVEL
 
     def feed(self, rms):
         """Returns None to keep going, or 'speech' | 'nothing' | 'limit' when recording should stop."""
         self.t += self.chunk
-        if self.t <= 0.3:
-            self.noise.append(rms); return None
-        floor = max(self.noise) if self.noise else 0.0
-        loud = rms > max(floor * 2.5, 350.0)
-        if loud: self.heard = True; self.quiet = 0.0
+        self.peak = max(self.peak, rms)
+        self.recent = (self.recent + [rms])[-self.WINDOW:]
+        floor = sorted(self.recent)[len(self.recent) // 4]
+        self.level = min(max(floor * 2.5, self.MIN_LEVEL), self.MAX_LEVEL)
+        if rms > self.level: self.heard = True; self.quiet = 0.0
         elif self.heard: self.quiet += self.chunk
         if self.heard and self.quiet >= self.silence: return "speech"
         if not self.heard and self.t >= self.max_wait: return "nothing"
@@ -115,10 +118,14 @@ def record_until_silence(source, cancelled=lambda: False):
         proc.terminate()
         try: proc.wait(timeout=2)
         except Exception: proc.kill()
-    if not ep.heard or cancelled(): return None
     path = os.path.join(RUN, "rec-%s.wav" % uuid.uuid4().hex[:8])
     with wave.open(path, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(RATE); w.writeframes(bytes(pcm))
+    log("recorded %.1fs, loudest chunk %d, speech level %d, speech %s" % (ep.t, ep.peak, ep.level, "heard" if ep.heard else "not heard"))
+    if not ep.heard or cancelled():
+        try: os.replace(path, os.path.join(RUN, "last-silent.wav"))      # kept so a missed recording can be listened to
+        except OSError: pass
+        return None
     return path
 
 # ---------- transcription ----------

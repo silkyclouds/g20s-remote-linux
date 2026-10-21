@@ -25,6 +25,22 @@ if [ "${1:-}" = "--http" ]; then
   set_conf G20_VOICE_BACKEND http; set_conf G20_VOICE_URL "$URL"
   grep -q '^G20_VOICE_LANGS=' "$HOME/.config/g20/g20.conf" || set_conf G20_VOICE_LANGS "${LANGS:-en}"
   command -v parecord >/dev/null || echo "Missing: parecord (package pulseaudio-utils). The keyboard's mic key needs it."
+  # A remote whose microphone is a USB audio input streams sound (LED blinking, batteries draining) for as long as PipeWire keeps
+  # that input open, and some distributions (Bazzite) never let audio devices suspend. Let the remote's input close when unused.
+  VENDOR=$(grep -E '^G20_DEVICE_NAME=' "$HOME/.config/g20/g20.conf" 2>/dev/null | cut -d= -f2- | tr -d '"' | awk '{print $1}')
+  if [ -n "$VENDOR" ]; then
+    mkdir -p "$HOME/.config/wireplumber/wireplumber.conf.d"
+    cat > "$HOME/.config/wireplumber/wireplumber.conf.d/52-remote-mic-suspend.conf" <<RULE
+# Lets the microphone of the remote's USB dongle close 3 seconds after its last use, so the remote stops streaming sound.
+monitor.alsa.rules = [
+  {
+    matches = [ { node.name = "~alsa_input.usb-$VENDOR*" } ]
+    actions = { update-props = { session.suspend-timeout-seconds = 3, node.pause-on-idle = true } }
+  }
+]
+RULE
+    systemctl --user restart wireplumber.service 2>/dev/null || true
+  fi
   cat > "$HOME/.config/systemd/user/g20-voice.service" <<'UNIT'
 [Unit]
 Description=G20 voice search (microphone to text, through a transcription server)
