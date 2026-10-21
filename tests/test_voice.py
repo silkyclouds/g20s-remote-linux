@@ -77,6 +77,20 @@ class EndpointerTest(unittest.TestCase):
         verdict, _ = self.run_levels([40] * 3 + [2000] * 400, max_total=5.0)
         self.assertEqual(verdict, "speech")
 
+    def test_speech_right_after_a_loud_click_is_still_heard(self):
+        # The first chunks are loud (a key click, or speech from the very start); quiet follows, then speech.
+        verdict, ep = self.run_levels([2000, 2100, 50] + [40] * 10 + [1500] * 8 + [40] * 12, silence=1.0)
+        self.assertEqual(verdict, "speech")
+        self.assertTrue(ep.heard)
+
+    def test_speech_from_the_very_first_chunk_is_heard(self):
+        verdict, ep = self.run_levels([1800] * 15 + [40] * 12, silence=1.0)
+        self.assertEqual(verdict, "speech")
+
+    def test_loudness_is_reported(self):
+        _, ep = self.run_levels([40, 900, 40])
+        self.assertEqual(ep.peak, 900)
+
     def test_chunk_loudness(self):
         self.assertAlmostEqual(self.v.chunk_rms(pcm(1000)), 1000, delta=1)
         self.assertEqual(self.v.chunk_rms(b""), 0.0)
@@ -151,6 +165,26 @@ class CancelTest(unittest.TestCase):
         real_popen = subprocess.Popen
         with mock.patch.object(v.subprocess, "Popen", lambda cmd, **kw: real_popen(["yes"], **kw)):
             self.assertIsNone(v.record_until_silence("any", cancelled))
+
+
+class CleanTranscriptTest(unittest.TestCase):
+    def setUp(self):
+        self.clean = load_voice().clean_transcript
+
+    def test_the_final_full_stop_is_dropped(self):
+        self.assertEqual(self.clean("Harry Potter."), "Harry Potter")
+
+    def test_commas_and_question_marks_are_dropped(self):
+        self.assertEqual(self.clean("Harry, Potter ? Oui !"), "Harry Potter Oui")
+
+    def test_apostrophes_hyphens_and_accents_stay(self):
+        self.assertEqual(self.clean("L'été meurtrier, Spider-Man."), "L'été meurtrier Spider-Man")
+
+    def test_decimal_numbers_stay(self):
+        self.assertEqual(self.clean("Apollo 13. Version 2.5"), "Apollo 13 Version 2.5")
+
+    def test_only_punctuation_gives_nothing(self):
+        self.assertEqual(self.clean(" . "), "")
 
 
 class ControlSocketTest(unittest.TestCase):

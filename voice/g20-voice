@@ -22,10 +22,10 @@ Configuration (~/.config/g20/g20.conf):
   G20_VOICE_SOURCE=auto      microphone: auto = the one named like your remote (G20_DEVICE_NAME), else the default input;
                              or a PipeWire/PulseAudio source name
   G20_VOICE_SILENCE=1.0      seconds of silence that end a recording
-  G20_VOICE_AUTOSUBMIT=0     1 = submit the search as soon as the text is ready
+  G20_VOICE_AUTOSUBMIT=1     1 = run the search as soon as the text is ready (default), 0 = leave it in the keyboard's field
 Test without a remote:  g20-voice --file recording.wav
 """
-import json, os, socket, struct, subprocess, sys, tempfile, threading, time, urllib.request, uuid, wave
+import json, os, re, socket, struct, subprocess, sys, tempfile, threading, time, urllib.request, uuid, wave
 SERVER = "http://127.0.0.1:48765"
 RUN = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-voice"); os.makedirs(RUN, exist_ok=True)
 CTL = os.path.join(RUN, "ctl")
@@ -48,7 +48,7 @@ MODEL_NAME = CONF.get("G20_VOICE_MODEL", "small")
 DEVICE = CONF.get("G20_VOICE_DEVICE", "auto")
 SOURCE = CONF.get("G20_VOICE_SOURCE", "auto")
 SILENCE_S = float(CONF.get("G20_VOICE_SILENCE", "1.0"))
-AUTOSUBMIT = CONF.get("G20_VOICE_AUTOSUBMIT", "0") == "1"
+AUTOSUBMIT = CONF.get("G20_VOICE_AUTOSUBMIT", "1") == "1"
 RATE = 16000
 LANGUAGE_NAMES = {"en": "english", "fr": "french", "de": "german", "es": "spanish", "it": "italian", "nl": "dutch",
                   "pt": "portuguese", "pl": "polish", "ru": "russian", "ja": "japanese", "ko": "korean", "zh": "chinese",
@@ -191,9 +191,15 @@ def transcribe_http(path):
     if code: return code, (r.get("text") or "").strip()
     r = _http_call(path, LANGS[0]); return LANGS[0], (r.get("text") or "").strip()
 
+def clean_transcript(text):
+    """Keeps the words only: a search box does not want the full stop or the commas that speech recognition adds."""
+    text = re.sub(r"(?<!\d)[.,]|[.,](?!\d)|[!?;:\u2026\u00bf\u00a1\"\u201c\u201d\u00ab\u00bb]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
 def transcribe(path):
-    """Returns (language, text)."""
-    return transcribe_http(path) if BACKEND == "http" else transcribe_local(path)
+    """Returns (language, text) with the text reduced to words."""
+    lang, text = transcribe_http(path) if BACKEND == "http" else transcribe_local(path)
+    return lang, clean_transcript(text)
 
 def post(path, body):
     try:

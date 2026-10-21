@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Mic / search key: open the on-screen keyboard (it also shows voice input when a Bluetooth voice remote is set up).
+# Mic / search key: open the on-screen keyboard. Pressed again while the keyboard is open, it starts voice search
+# (the server asks the voice daemon to listen to the remote's microphone).
 # $1 = sanitized class of the window in front, set by g20-micro-kwin.
 # Some apps need their search page opened first: add them below (Plezy: Ctrl+F opens its search page, Plezy 1.28+).
 export YDOTOOL_SOCKET=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/.ydotool_socket
@@ -8,4 +9,4 @@ echo "mic: active window = $cls"
 case "$cls" in
   *plezy*) ydotool key 29:1 33:1 33:0 29:0; sleep 0.8 ;;      # Ctrl+F
 esac
-curl -s -m 5 -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:48765/api/keyboard >/dev/null
+curl -s -m 5 -X POST -H 'Content-Type: application/json' -d '{"voice": true}' http://127.0.0.1:48765/api/keyboard >/dev/null

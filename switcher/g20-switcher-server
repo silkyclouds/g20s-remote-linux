@@ -225,13 +225,18 @@ KBD_RAISE_JS = """for (const w of workspace.windowList()) { if ((w.resourceClass
 def open_keyboard(params=None):
     """Open the on-screen keyboard (never two). Remembers the window that has the focus: the text goes there."""
     from urllib.parse import urlencode
-    params = params or {}
+    params = dict(params or {})
+    listen = params.pop("voice", False)               # the remote's mic key: show the keyboard already listening
     win = keyboard_window()
-    if win: kwin(KBD_RAISE_JS); log("keyboard: raised"); return
+    if win:
+        kwin(KBD_RAISE_JS); log("keyboard: raised")
+        if listen: log("keyboard: mic key again ->", voice_command("cancel" if voice["state"] == "listening" else "start")[1])
+        return
     data = kwin(LIST_JS, wait=True) or []
     target = next((w for w in reversed(data) if w["active"] and not is_keyboard(w) and not is_switcher(w)), None) \
         or next((w for w in reversed(data) if w["normal"] and not w["skip"] and not is_keyboard(w) and not is_switcher(w)), None)
     kbd["target"] = target["id"] if target else None
+    voice["text"] = ""; voice["error"] = None             # a new keyboard starts from an empty field, never from the last search
     if not params.get("app") and target: params["app"] = app_info(target)[0] or "Search"
     params.setdefault("layout", CONF.get("G20_KEYBOARD_LAYOUT", "qwerty"))
     q = urlencode({k: v for k, v in params.items() if v})
@@ -240,12 +245,14 @@ def open_keyboard(params=None):
         time.sleep(0.25)
         if keyboard_window(): kwin(KBD_RAISE_JS); break
     log("keyboard: opened for", kbd["target"])
+    if listen: log("keyboard: listening ->", voice_command("start")[1])
 
 def close_keyboard(refocus=True):
     kwin(KBD_CLOSE_JS)
     if refocus and kbd["target"]: kwin(focus_js(kbd["target"], close_switcher=False))
 
 def type_text(text, submit):
+    voice["text"] = ""                                    # consumed: the next keyboard must open empty
     close_keyboard(); time.sleep(0.5)
     env = dict(os.environ, WAYLAND_DISPLAY="wayland-0", YDOTOOL_SOCKET=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket"))
     if text:
@@ -271,7 +278,7 @@ def set_voice(body):
     if voice["state"] in ("listening", "transcribing") and not keyboard_window():
         threading.Thread(target=open_keyboard, daemon=True).start()
     if voice["state"] == "idle" and voice["text"] and body.get("submit"):
-        threading.Thread(target=lambda: (time.sleep(1.0), type_text(voice["text"], True)), daemon=True).start()
+        threading.Thread(target=lambda: (time.sleep(0.4), type_text(voice["text"], True)), daemon=True).start()
 
 
 
