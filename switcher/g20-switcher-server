@@ -211,7 +211,7 @@ def load_conf():
 CONF = load_conf()
 voice = {"state": "idle" if CONF.get("G20_VOICE_LANGS") else "off", "text": "", "lang": None, "error": None}
 VOICE_CTL = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "g20-voice", "ctl")
-kbd = {"target": None}                                   # uuid of the window the typed text goes to
+kbd = {"target": None, "cls": ""}                        # uuid and class of the window the typed text goes to
 
 def is_switcher(w): return w["title"] == TITLE and re.search("chrome", w["cls"], re.I)
 def is_keyboard(w): return "keyboard.html" in w["cls"]
@@ -236,6 +236,7 @@ def open_keyboard(params=None):
     target = next((w for w in reversed(data) if w["active"] and not is_keyboard(w) and not is_switcher(w)), None) \
         or next((w for w in reversed(data) if w["normal"] and not w["skip"] and not is_keyboard(w) and not is_switcher(w)), None)
     kbd["target"] = target["id"] if target else None
+    kbd["cls"] = ((target["cls"] or "") if target else "").lower()
     voice["text"] = ""; voice["error"] = None             # a new keyboard starts from an empty field, never from the last search
     if not params.get("app") and target: params["app"] = app_info(target)[0] or "Search"
     params.setdefault("layout", CONF.get("G20_KEYBOARD_LAYOUT", "qwerty"))
@@ -253,10 +254,18 @@ def close_keyboard(refocus=True):
 
 def type_text(text, submit):
     voice["text"] = ""                                    # consumed: the next keyboard must open empty
+    cls = kbd.get("cls", "")
     close_keyboard(); time.sleep(0.5)
+    target = cdp_target(cls) if text else None
+    if target:
+        port, title, prepare = target
+        try:
+            if cdp_type(port, text, submit, title, prepare): log("typed %d characters through the debug port of %s" % (len(text), cls)); return
+        except Exception as e: log("debug port typing failed:", e)
     env = dict(os.environ, WAYLAND_DISPLAY="wayland-0", YDOTOOL_SOCKET=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket"))
     if text:
         subprocess.run(["wl-copy", "--", text], env=env, timeout=5)
+        subprocess.run(["ydotool", "key", "29:1", "30:1", "30:0", "29:0"], env=env, timeout=5)         # Ctrl+A: replace what the field holds
         subprocess.run(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"], env=env, timeout=5)        # Ctrl+V
     if submit:
         time.sleep(0.3); subprocess.run(["ydotool", "key", "28:1", "28:0"], env=env, timeout=5)         # Enter
@@ -334,6 +343,50 @@ def cdp_text_focus(port, only_title=None):
             if (r.get("result", {}).get("result", {}) or {}).get("value") is True: return True
         except Exception: continue
     return False
+
+def _cdp_call(sk, buf, state, method, params=None):
+    """One Chrome DevTools Protocol call on an open websocket; events that arrive meanwhile are skipped."""
+    state["id"] += 1
+    _ws_send(sk, json.dumps({"id": state["id"], "method": method, "params": params or {}}))
+    while True:
+        msg = json.loads(_ws_recv(sk, buf))
+        if msg.get("id") == state["id"]: return msg.get("result", {})
+
+def cdp_type(port, text, submit, title=None, prepare=None):
+    """Types `text` into an Electron / Chromium app through its debug port, replacing what the field holds.
+    `prepare` is a JavaScript expression that focuses and selects the field and returns true when it exists.
+    Returns True when the text went in."""
+    pages = json.load(urllib.request.urlopen("http://127.0.0.1:%d/json" % port, timeout=2))
+    for t in pages:
+        if t.get("type") != "page" or not t.get("webSocketDebuggerUrl"): continue
+        if title and title not in (t.get("title") or ""): continue
+        try:
+            sk, buf = _ws_connect("127.0.0.1", port, "/" + t["webSocketDebuggerUrl"].split("/", 3)[3])
+            state = {"id": 0}
+            ok = True
+            if prepare:
+                ok = (_cdp_call(sk, buf, state, "Runtime.evaluate", {"expression": prepare, "returnByValue": True}).get("result", {}) or {}).get("value") is True
+            if ok:
+                _cdp_call(sk, buf, state, "Input.insertText", {"text": text})
+                if submit:
+                    for kind in ("keyDown", "keyUp"):
+                        _cdp_call(sk, buf, state, "Input.dispatchKeyEvent", {"type": kind, "key": "Enter", "code": "Enter",
+                                  "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13, "text": "\r" if kind == "keyDown" else ""})
+            sk.close()
+            if ok: return True
+        except Exception as e: log("cdp_type failed on a page:", e)
+    return False
+
+STEAM_SEARCH_JS = "(function(){var e=document.querySelector('input[type=search]');if(!e)return false;e.focus();e.select();return true})()"
+
+def cdp_target(cls):
+    """(port, page title filter, preparation script) of the application whose class is `cls`, or None."""
+    if cls in ("steam", "steamwebhelper"): return (8080, "Big Picture", STEAM_SEARCH_JS)
+    for part in CONF.get("G20_CDP_PORTS", "").split(","):
+        app, _, port = part.partition(":")
+        if app and port.isdigit() and app.lower() in cls: return (int(port), None, None)
+    return None
+
 
 def active_window():
     data = kwin(LIST_JS, wait=True) or []
