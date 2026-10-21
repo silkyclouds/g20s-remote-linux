@@ -262,6 +262,9 @@ def type_text(text, submit):
         try:
             if cdp_type(port, text, submit, title, prepare): log("typed %d characters through the debug port of %s" % (len(text), cls)); return
         except Exception as e: log("debug port typing failed:", e)
+    if text and not (cls.startswith("plezy") or text_field_active()[0]):
+        # Pasting and pressing Enter with nothing to type into would act on whatever has the focus (it can start a video).
+        log("no text field has the focus in %s: nothing typed" % (cls or "the window in front")); return
     env = dict(os.environ, WAYLAND_DISPLAY="wayland-0", YDOTOOL_SOCKET=os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket"))
     if text:
         subprocess.run(["wl-copy", "--", text], env=env, timeout=5)

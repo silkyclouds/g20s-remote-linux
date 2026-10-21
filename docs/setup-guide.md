@@ -86,16 +86,23 @@ They are small web pages shown full screen by Chrome/Chromium, served only on yo
 
 ## 5. Voice search
 
-Needs a **Bluetooth** remote (the microphone only works over Bluetooth, never through the 2.4 GHz dongle) and a Bluetooth adapter.
+Voice search needs a microphone the PC can record, a speech recognizer and one install command.
 
-```bash
-./voice/install-voice.sh          # installs the microphone bridge and the speech engine
-bluetoothctl                      # pair the remote once (scan on, pair, trust, connect)
-sudo bin/g20-setup --only mic     # the Bluetooth remote has other ids than the dongle
-```
+1. **Microphone.** A 2.4 GHz dongle remote usually shows up as an ordinary USB audio input: check with `pactl list short sources` (look for your remote's vendor name).
+   A Bluetooth voice remote needs a Bluetooth adapter and [ATVVoice](https://github.com/b0o/ATVVoice); `./voice/install-voice.sh` installs it.
+2. **Recognizer.** The simplest is a Whisper server that speaks the OpenAI audio API. With the `whisper.cpp` container:
 
-Set the languages: `G20_VOICE_LANGS=fr,en` (first = default). With several languages the spoken one is detected among those only. `G20_VOICE_MODEL=small` (tiny to large-v3).
-Hold the mic key, speak, release: the text lands in the on-screen keyboard.
+   ```bash
+   podman run -d --name whisper -p 8178:8178 -v ~/whisper/models:/models:ro \
+     --entrypoint /app/build/bin/whisper-server ghcr.io/ggml-org/whisper.cpp:main \
+     --host 0.0.0.0 --port 8178 --inference-path /v1/audio/transcriptions -m /models/ggml-small.bin -l auto -t 4
+   ```
+
+   (download `ggml-small.bin` from the whisper.cpp model repository first; `small` is multilingual and about 470 MB.) It sleeps when nobody speaks: about 600 MB of memory and no processor time.
+3. **Install.** `LANGS="fr,en" ./voice/install-voice.sh --http http://127.0.0.1:8178`. Without `--http` the daemon runs faster-whisper itself.
+4. **Use it.** Press the **Mic** key from any app: the keyboard opens already listening, you speak, and the search runs in the app. Press the key again to cancel.
+
+Configuration keys are in the [reference](#8-configuration-reference) and the README. If a sentence is missed, `journalctl --user -u g20-voice -f` shows the loudest sound heard and the level that counts as speech.
 
 ## 6. Lossless sound and the quality checklist
 
@@ -138,7 +145,7 @@ If Home Assistant does not answer, the notice turns amber: "Home Assistant did n
 | `G20_HOME_MATCH`, `G20_HOME_PROC`, `G20_HOME_CMD`, `G20_HOME_FULLSCREEN` | the Home button |
 | `G20_KEYBOARD_LAYOUT` | `qwerty`, `azerty` or `qwertz` |
 | `G20_AUTO_KEYBOARD`, `G20_CDP_PORTS` | the keyboard opening by itself on OK (`0` disables; `app:port` list for Chromium apps with a debug port) |
-| `G20_VOICE_LANGS`, `G20_VOICE_MODEL`, `G20_VOICE_DEVICE`, `G20_VOICE_AUTOSUBMIT` | voice search |
+| `G20_VOICE_LANGS`, `G20_VOICE_BACKEND`, `G20_VOICE_URL`, `G20_VOICE_MODEL`, `G20_VOICE_DEVICE`, `G20_VOICE_SOURCE`, `G20_VOICE_SILENCE`, `G20_VOICE_AUTOSUBMIT` | voice search (backend `http` or `local`, the server, the microphone, how long a silence ends a recording, run the search at once) |
 | `G20_SCENE_LABEL`, `G20_SCENE_WEBHOOK_URL`, `G20_CMD_SCENE`, `G20_SCENE_ICON`, `G20_SCENE_DETAIL`, `G20_SCENE_NOTICE` | the scene button |
 | `G20_AUDIO_POPUP`, `G20_AUDIO_POPUP_APPS`, `G20_AUDIO_POPUP_SECONDS` | the quality checklist |
 | `G20_REMOTE_SECRET`, `G20_HA_IP`, `G20_BIND` | letting Home Assistant call the PC (input picker, notices) |

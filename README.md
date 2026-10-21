@@ -1,36 +1,28 @@
-# G20S remote on Linux: replace your Nvidia Shield with your PC
+# Couch Linux: a media-center layer for Steam Big Picture on a TV
 
 ![App switcher](docs/app-switcher.png)
 
-## Why this exists
+A Linux PC in front of a TV can be a very good media center, and Steam Big Picture is a very good front door for it. What it lacks is the
+living-room layer: a remote that works everywhere, a way to switch or kill apps without a mouse, a keyboard you can use from the sofa,
+the TV's own volume and inputs, and proof that your sound is untouched. This repository is that layer, for **KDE Plasma on Wayland**
+(tested on Bazzite). Nothing in it is specific to one remote, one app or one TV.
 
-Like a lot of people, my **Nvidia Shield** became slow and laggy over the years, especially with 4K content. It does not play
-**AV1** well, and moving through its menus got tedious. So I decided to use the machine I already had: my **gaming PC**, put in a
-low-energy mode, doing everything on the TV: **Steam in Big Picture**, a **Plex** client (I chose [Plezy](https://github.com/edde746/plezy);
-a Jellyfin client works the same way) and a **YouTube** client ([VacuumTube](https://github.com/shy1132/VacuumTube)).
-
-That left one problem: a remote. I settled on the **JZK G20S Pro Plus** because it is **backlit**, has a **microphone**, **programmable
-number keys**, an **air mouse**, and it can control the TV: the remote itself learns infrared for Power and Mute, and I send power and
-**volume** to the TV through **Home Assistant** (Samsung / SmartThings integrations) so the PC stays the single hub and the volume
-keys change the **TV's** volume instead of the PC's. This repository is everything needed to make that remote a proper
-couch controller on Linux, and to make it **plug and play** for anyone with a similar remote (any brand: you teach it your buttons).
-
-Result: no more Shield lag, 4K and AV1 play fine on the PC, the PC drops to a low-power state when nobody uses it, and the
-remote does everything from the sofa.
+It started as the setup of one person who replaced a Shield with a gaming PC, and it is still shaped by that setup: **Steam Big Picture** as the
+launcher, **[Plezy](https://github.com/edde746/plezy)** for the Plex library and **[VacuumTube](https://github.com/shy1132/VacuumTube)** for YouTube,
+driven by a **JZK G20S Pro Plus** remote. Other remotes and other apps are supported by design, and adding yours is meant to be easy:
+see [Adding an app](docs/adding-an-app.md).
 
 ## What you get
 
-* **Power / Volume / Mute** go to the **TV** (Home Assistant webhook, or any command you like), not to the PC. The PC never suspends because of the Power key.
-* **Home** brings your media app back full screen (or starts it).
-* **Source** opens a **TV input picker** (HDMI 1, 2, 3...) and switches the TV's input.
-* **D-pad, OK, Back** work everywhere, including **Steam Big Picture** (Back becomes Escape, which is what Steam wants).
-* **Play/Pause, Rewind/Previous, Fast-forward/Next** act on the player (standard media keys, MPRIS).
-* **Search key**: opens a **TV on-screen keyboard** (D-pad or air mouse, letters, numbers, symbols, accents, AZERTY/QWERTY/QWERTZ).
-* **Voice search** if the remote is paired over **Bluetooth**: hold the mic key and speak, in the language(s) you choose (e.g. French and English); the text lands in the keyboard's field.
-* Optional buttons: **app switcher** (a TV-style card view of the open windows with live screenshots; hold OK to kill a frozen app), previous / next window.
-* An optional **scene button**: one press starts a Home Assistant scene (e.g. "Movie time") and a notice slides in at the top right of the screen for 3 seconds (green when it worked, amber if Home Assistant did not answer). Map it with `sudo g20-setup --only scene`; see [ha/scene.example.yaml](ha/scene.example.yaml).
-* A **"maximum quality" checklist** toast when a film starts (is the sound an untouched bitstream, which codec, lossless or not, channels, rate, screen mode), plus `g20-audio-setup` to make PipeWire pass TrueHD / DTS-HD / Dolby Digital to your soundbar. See [docs/media-center.md](docs/media-center.md).
-* Optional **idle power saving** (`g20-eco`): the PC stays awake and ready but uses the minimum when nothing needs it.
+* **A remote mapper for any remote.** A wizard asks you to press the button for each function (arrows, OK, Back, Home, Power, volume, mic, media keys...) and writes the remap. Every remote then behaves the same way. 2.4 GHz dongles and Bluetooth remotes both work.
+* **TV control.** Power, volume and mute go to the **TV** (through Home Assistant or any command), not to the PC. The PC never suspends because of the Power key.
+* **An app switcher with a kill button.** Cards of the open windows with live screenshots; OK brings one forward, hold OK for 3 seconds to kill a frozen app.
+* **A TV input picker.** Choose HDMI 1, 2, 3... from the sofa; the TV switches.
+* **An on-screen keyboard that finds the search field by itself,** for apps that have none. It opens when OK lands on a text field, or from the mic key.
+* **Voice search** in your language, from the same keyboard or with one press of the mic key, typed into the search box of Steam, Plezy, VacuumTube and more.
+* **Notices and a scene button.** A transparent overlay confirms a Home Assistant scene ("Movie time") for 3 seconds without stealing focus.
+* **A bit-perfect sound checklist.** When a film starts, a toast tells you whether the soundtrack reaches the receiver untouched.
+* **Optional idle power saving** that keeps the PC ready and uses the minimum when nothing needs it.
 
 ## What it looks like
 
@@ -38,12 +30,27 @@ remote does everything from the sofa.
 |---|---|
 | ![Open apps](docs/app-switcher.png) | **App switcher**: cards of the open windows with live pictures. OK opens, OK held 3 s closes a frozen app. |
 | ![Input picker](docs/source-picker.png) | **TV input picker**: choose the HDMI input with the D-pad, the TV switches through Home Assistant. |
-| ![Keyboard](docs/keyboard.png) | **On-screen keyboard** for searches (D-pad or air mouse, voice if set up). |
-| ![Quality checklist](docs/audio-truehd.png) | **Quality checklist** when a film starts: untouched Dolby TrueHD bitstream, lossless, 4K 60 Hz. Amber when something lowers the quality ([more](docs/setup-guide.md#9-what-it-looks-like-and-ideas)). |
-| ![Scene notice](docs/notice-ok.png) | **Scene button**: one press starts a Home Assistant scene ("Movie time"), a notice confirms it for 3 seconds. |
+| ![Keyboard](docs/keyboard.png) | **On-screen keyboard** for searches (D-pad or air mouse, accents, AZERTY/QWERTY/QWERTZ). |
+| ![Voice listening](docs/keyboard-voice-listening.png) | **Voice search**: press the mic key, the keyboard opens already listening and stops when you stop talking. |
+| ![Voice result](docs/keyboard-voice-result.png) | The words land in the field. With auto-submit on (the default) the search then runs in the app, without a press on Search. |
+| ![Quality checklist](docs/audio-truehd.png) | **Quality checklist** when a film starts: untouched Dolby TrueHD bitstream, lossless, 4K 60 Hz. Amber when something lowers the quality ([more](docs/setup-guide.md)). |
+| ![Scene notice](docs/notice-ok.png) | **Scene button**: one press starts a Home Assistant scene, a notice confirms it for 3 seconds. |
 
 **New here? Read the [step-by-step setup guide](docs/setup-guide.md)**: install, teach the remote, TV control through Home Assistant, the pages, voice, lossless sound,
 the scene button, every configuration key, ideas and troubleshooting.
+
+## Apps it works with
+
+| App | Home button | Keyboard opens by itself | Voice search typed into |
+|---|---|---|---|
+| **Steam Big Picture** | yes | yes (Steam's local debug port) | yes, its search field (replaced each time) |
+| **Plezy** | yes | yes | yes (Ctrl+F opens its search page first) |
+| **VacuumTube** (YouTube for TV) | yes | yes | yes, through its debug port (see [Adding an app](docs/adding-an-app.md)) |
+| Any Wayland app with a text field | yes | yes (KDE text-input state) | yes, Ctrl+A then Ctrl+V into the focused field |
+| Any Electron or Chromium app | yes | with `--remote-debugging-port` | with `--remote-debugging-port` |
+
+Voice text is only typed when a text field really has the focus, so a stray voice search never presses Enter on a poster. Your app is not in the table?
+Everything that is app specific is a few lines in one place; [Adding an app](docs/adding-an-app.md) walks through it, and a pull request that adds one is welcome.
 
 ## Quick start
 
@@ -109,20 +116,37 @@ Press your **app switcher** button: a full-screen page lists every open window a
 **Back** or the same button again closes it. The page is a single HTML file designed with [Claude Design](https://claude.ai/design) and served unmodified;
 a small local server lists windows through a KWin script (called back over D-Bus) and takes the screenshots with KWin's `ScreenShot2`.
 
-## The on-screen keyboard and voice
+## The on-screen keyboard
 
 ![On-screen keyboard](docs/keyboard.png)
 
-Press the **Mic/Search** key: a keyboard opens (D-pad + OK, or the air-mouse pointer; hold OK on a letter for accents).
-Type, press **Search**: the text is pasted into the app that had the focus (for Plezy, the search page is opened first) and Enter is sent.
+It opens on its own when OK lands on a text field (Steam, Plezy, any Wayland app with text input, any app listed in `G20_CDP_PORTS`), or when you press the **Mic/Search** key.
+Move with the D-pad (or the air-mouse pointer), hold OK on a letter for accents. **Search** pastes the text into the app that had the focus (for Plezy, the search page is opened first) and sends Enter.
 
-**Voice** needs a **Bluetooth** remote and a Bluetooth adapter: the microphone of this remote type only works over Bluetooth
-(Android TV voice protocol), never through the 2.4 GHz dongle, and the remote is in one mode or the other, not both. Install it with
-`./voice/install-voice.sh`, pair the remote once with `bluetoothctl`, rerun `sudo bin/g20-setup` (the Bluetooth device has other ids), and hold the mic key:
-the transcript fills the keyboard's field and you can correct it before searching.
-It uses [ATVVoice](https://github.com/b0o/ATVVoice) (the remote's mic as a PipeWire source) and [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-(GPU if you have an NVIDIA card, CPU otherwise). **Languages**: set `G20_VOICE_LANGS=fr,en` (first = default); with several languages the spoken language is
-detected **among those only**, so a family can ask for an English title one moment and a French one the next.
+## Voice search
+
+![Voice search](docs/keyboard-voice-listening.png)
+
+Press the **Mic** key from anywhere: the keyboard opens already listening. Say what you want, stop talking, and the search runs in the app. Press the key again while it listens to cancel.
+The on-screen mic key does the same, from the keyboard itself.
+
+How it works: the daemon `g20-voice` listens to the remote's microphone (with a 2.4 GHz dongle it is an ordinary USB audio input; with a Bluetooth voice remote it comes through
+[ATVVoice](https://github.com/b0o/ATVVoice)), stops by itself when you stop talking, sends the recording to a speech recognizer, and hands the words to the keyboard overlay. The overlay types them into the app,
+replacing what the field held. The transcript keeps its words only: no full stop, no commas.
+
+**The speech recognizer** is either of these, and both work offline:
+
+* **A Whisper server on your network or on this PC** (`G20_VOICE_BACKEND=http`). Anything that speaks the OpenAI `audio/transcriptions` API will do: the `whisper.cpp` server, faster-whisper-server, LocalAI.
+  Nothing else to install on the PC: `LANGS="fr,en" ./voice/install-voice.sh --http http://127.0.0.1:8178`. A CPU is enough for a short sentence (about a second with the `small` model).
+* **faster-whisper inside the daemon** (`./voice/install-voice.sh`, the default), on an NVIDIA GPU or the CPU.
+
+**Languages**: `G20_VOICE_LANGS=fr,en` (first = default). With several languages the spoken language is detected among those only, so a family can ask for an English title one moment and a French one the next.
+
+**Typed where?** Steam and any Chromium app with a debug port get the text through that port (Steam Big Picture's search box is replaced, then Enter). Other apps get Ctrl+A and Ctrl+V.
+Auto-submit is on by default (`G20_VOICE_AUTOSUBMIT=1`); set it to `0` to leave the words in the keyboard's field and press Search yourself.
+
+**Battery.** A remote whose microphone is a USB audio input streams sound for as long as the PC keeps that input open, which makes its LED blink and drains its batteries.
+Some distributions (Bazzite) never let audio devices suspend. The voice installer adds a WirePlumber rule (`~/.config/wireplumber/wireplumber.conf.d/52-remote-mic-suspend.conf`) that lets the remote's input close 3 seconds after its last use.
 
 ## The scene button
 
@@ -139,7 +163,7 @@ A PC behind a soundbar or AV receiver can send TrueHD, DTS-HD and Dolby Digital 
 ## Requirements
 
 KDE Plasma 6 on **Wayland** (window scripts use KWin; the toasts need PySide6 with QtWebEngine and Plasma's LayerShellQt, present on Bazzite KDE), systemd user services, `qdbus`, `curl`, `busctl`, Python 3.11+ with PyGObject (`gi`) and Pillow,
-`ydotool`/`ydotoold` and `wl-clipboard` (keyboard / search), Chrome or Chromium (native or Flatpak) for the switcher and keyboard.
+`ydotool`/`ydotoold` and `wl-clipboard` (keyboard / search), `parecord` (voice, package `pulseaudio-utils`), Chrome or Chromium (native or Flatpak) for the switcher and keyboard.
 Tested on **Bazzite** (Fedora Atomic) with Plasma 6.7, a 4K TV, Steam Big Picture, Plezy and VacuumTube. Nothing needs `rpm-ostree` layering:
 PipeWire (`pw-dump`, `pw-cli`, `pactl`) for the audio part. Everything lives in `~/.local`, `~/.config` and two files in `/etc/udev`.
 
@@ -157,7 +181,13 @@ G20_HOME_CMD=plezy
 G20_KEYBOARD_LAYOUT=qwerty               # qwerty | azerty | qwertz
 G20_SOURCES=hdmi1,hdmi2:PC,hdmi3,hdmi4   # TV inputs for the source picker (id:label)
 G20_VOICE_LANGS=fr,en                    # voice languages, first = default
-G20_VOICE_MODEL=small                    # tiny | base | small | medium | large-v3
+G20_VOICE_BACKEND=http                   # http (a Whisper server) | local (faster-whisper in the daemon)
+G20_VOICE_URL=http://127.0.0.1:8178      # the server, for backend http
+G20_VOICE_MODEL=small                    # tiny | base | small | medium | large-v3 (the name sent to an http server)
+#G20_VOICE_SOURCE=auto                   # microphone: auto = the remote's own input, or a PipeWire source name
+#G20_VOICE_SILENCE=1.0                   # seconds of silence that end a recording
+#G20_VOICE_AUTOSUBMIT=1                  # 1 = run the search at once, 0 = wait for Search
+G20_CDP_PORTS=vacuumtube:9223            # Electron apps started with --remote-debugging-port (app:port)
 ```
 
 Home Assistant side: `ha/automation.example.yaml` receives the webhook; `ha/power-with-soundbar.example.yaml` is the Power sequence when the PC sits behind a soundbar (Power toggles using a power-measuring plug on the TV, because many TV integrations report a stale state).
@@ -173,6 +203,9 @@ lowest energy profile with turbo off; it goes back at the first activity. No sus
 * `/dev/input/eventNN` numbers change at every replug; nothing here depends on them.
 * Nothing on a key: `journalctl --user -u g20d -f`. Switcher without screenshots: `journalctl --user -u g20-switcher`.
 * Steam's own screensaver is not woken by this remote: disable it in Steam (Settings > Customization > Screensaver).
+* Voice: `journalctl --user -u g20-voice -f` shows every listening with the loudest chunk it heard. "Didn't catch that" with a loudness well below 300 means the microphone level is low or the wrong input was picked: set `G20_VOICE_SOURCE`.
+  The last recording with no speech is kept in `$XDG_RUNTIME_DIR/g20-voice/last-silent.wav`, so you can listen to it.
+* The remote's LED blinks every second or two for no reason: something keeps its microphone open. Check `cat /proc/asound/card*/pcm0c/sub0/status` (`RUNNING` is bad) and install the WirePlumber rule above.
 * Uninstall: `./uninstall.sh`.
 
 MIT licence. Not affiliated with any of the projects mentioned.
