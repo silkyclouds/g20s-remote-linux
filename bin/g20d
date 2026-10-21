@@ -145,7 +145,7 @@ while True:
             elif v == 1 and c == KEY_MACRO2: run("g20-window", "prev")
             elif v == 1 and c == KEY_MACRO3: run("g20-switcher")
             elif v == 1 and c == KEY_MACRO4: run("g20-window", "next")
-            elif v == 1 and c == KEY_MACRO5: run("g20-source")
+            elif v == 1 and c == KEY_MACRO5 and CONF.get("G20_SOURCES"): run("g20-source")   # no TV inputs configured: the key does nothing
             elif v == 1 and c == KEY_VOICECOMMAND: run("g20-micro-kwin")
             elif v == 1 and c == KEY_ENTER and CONF.get("G20_AUTO_KEYBOARD", "1") != "0": ok_pressed()
             elif v == 1 and c == KEY_MACRO6:
